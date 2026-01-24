@@ -282,6 +282,9 @@ class ComputeMetrics:
         This returns a closure compatible with Trainer's compute_metrics
         parameter, handling the logits/labels format from eval_preds.
         
+        CRITICAL: Uses label-restricted argmax (not full vocab) for classification.
+        Finds first non-masked position and extracts prediction at that position.
+        
         Args:
             log_first_n: Number of samples to log on first evaluation
             
@@ -299,25 +302,45 @@ class ComputeMetrics:
         """
         seen = False
         label_token_ids = self.label_token_ids
-        valid_token_ids = self.valid_token_ids
+        valid_token_ids = np.array(self.valid_token_ids)  # Convert to numpy for indexing
         labels_list = self.labels
         tokenizer = self.tokenizer
         
         def compute_metrics(eval_preds):
             nonlocal seen
-            logits, labels = eval_preds
-            
-            # Get predictions: argmax over vocab, shifted by 1
-            preds = logits.argmax(-1)[:, :-1]
-            labels = labels[:, 1:]
+            logits, labels = eval_preds  # logits: [B, T, V], labels: [B, T]
             
             gold, pred = [], []
-            for p_row, l_row in zip(preds, labels):
+            unknown_gold_count = 0
+            
+            for i in range(labels.shape[0]):
+                l_row = labels[i]
+                
                 # Find first non-masked position (where label != -100)
-                idx = np.where(l_row != -100)[0]
-                if idx.size:
-                    gold.append(int(l_row[idx[0]]))
-                    pred.append(int(p_row[idx[0]]))
+                idxs = np.where(l_row != -100)[0]
+                if idxs.size == 0:
+                    continue
+                
+                pos = int(idxs[0])
+                gold_id = int(l_row[pos])
+                
+                # Validate gold label is in our valid set
+                if gold_id not in valid_token_ids:
+                    unknown_gold_count += 1
+                    continue
+                
+                # Extract logits at the answer position: [V]
+                step_logits = logits[i, pos, :]
+                
+                # CRITICAL: Restrict to label tokens only (not full vocab)
+                label_logits = step_logits[valid_token_ids]  # [num_labels]
+                
+                # Argmax among label tokens
+                best_label_idx = int(label_logits.argmax())
+                pred_id = int(valid_token_ids[best_label_idx])
+                
+                gold.append(gold_id)
+                pred.append(pred_id)
             
             # Log samples on first call
             if not seen and len(gold) >= log_first_n and tokenizer is not None:
@@ -325,15 +348,19 @@ class ComputeMetrics:
                     (tokenizer.decode([p]).strip(), tokenizer.decode([g]).strip())
                     for p, g in zip(pred[:log_first_n], gold[:log_first_n])
                 ]
-                print(f"📋 Sample pred↔gold: {samples}")
+                print(f"📋 Sample pred↔gold (label-restricted): {samples}")
                 seen = True
+            
+            # Warn if gold labels outside valid set
+            if unknown_gold_count > 0:
+                print(f"⚠️  {unknown_gold_count} samples had gold labels outside valid set")
             
             # Compute metrics
             results = {
                 "accuracy": accuracy_score(gold, pred),
                 "f1_macro": f1_score(
                     gold, pred,
-                    labels=valid_token_ids,
+                    labels=valid_token_ids.tolist(),
                     average="macro",
                     zero_division=0
                 ),

@@ -9,6 +9,17 @@ that preserve target accuracy.
 from compressgpt.create_dataset import DatasetBuilder
 from compressgpt.compute_metrics import ComputeMetrics
 from compressgpt.model_runner import ModelRunner
+from compressgpt.trainer import CompressTrainer
+from compressgpt.config import LoraConfig, QLoraConfig, TrainingConfig, PipelineConfig
 
 __version__ = "0.1.0"
-__all__ = ["DatasetBuilder", "ComputeMetrics", "ModelRunner"]
+__all__ = [
+    "DatasetBuilder",
+    "ComputeMetrics",
+    "ModelRunner",
+    "CompressTrainer",
+    "LoraConfig",
+    "QLoraConfig",
+    "TrainingConfig",
+    "PipelineConfig",
+]
