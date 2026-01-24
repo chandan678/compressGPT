@@ -8,7 +8,7 @@ import os
 import json
 import pytest
 import pandas as pd
-from create_dataset import DatasetBuilder
+from compressgpt.create_dataset import DatasetBuilder
 
 
 @pytest.fixture
