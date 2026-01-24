@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "compressgpt"
+version = "0.1.0"
+description = "LLM Compression and Optimization Library - Build the smallest runnable models that preserve target accuracy"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "chandan678"}
+]
+keywords = [
+    "llm",
+    "compression",
+    "optimization",
+    "fine-tuning",
+    "machine-learning",
+    "deep-learning",
+    "transformers",
+    "sft",
+    "supervised-fine-tuning"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=1.5.0",
+    "datasets>=2.0.0",
+    "transformers>=4.20.0",
+    "scikit-learn>=1.0.0",
+    "torch>=2.0.0",
+    "tqdm>=4.60.0",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/chandan678/compressgpt"
+Repository = "https://github.com/chandan678/compressgpt"
+Issues = "https://github.com/chandan678/compressgpt/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["compressgpt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v"
