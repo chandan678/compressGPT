@@ -1,75 +1,69 @@
 """
-Compute Metrics for compressGPT
+Compute Metrics for compressGPT v2
 
-This module provides the ComputeMetrics class for computing accuracy metrics
-on model predictions. Supports dynamic label-based metrics without hardcoding.
+This module provides the ComputeMetrics class with label-restricted argmax
+for computing accuracy metrics on model predictions.
 
-Example usage:
-    from compressgpt import DatasetBuilder, ModelRunner, ComputeMetrics
+Example usage (v2):
+    from compressgpt import DatasetBuilder, ComputeMetrics
     
-    # Build dataset and get metadata
     builder = DatasetBuilder(...)
-    dataset = builder.build()
-    metadata = builder.get_metadata(tokenizer)
+    builder.build()
     
-    # Run inference
-    runner = ModelRunner(model, tokenizer, metadata)
-    predictions, gold_labels = runner.run(dataset)
+    # Create metrics with label restriction
+    metrics = ComputeMetrics(
+        labels=builder.label_space.labels,
+        valid_token_ids=builder.label_space.valid_token_ids,
+        id_to_label=builder.label_space.id_to_label,
+        tokenizer=tokenizer
+    )
     
-    # Compute metrics
-    metrics = ComputeMetrics(metadata, tokenizer)
-    results = metrics.compute(predictions, gold_labels)
-    # → {"accuracy": 0.92, "f1_macro": 0.89, "f1_yes": 0.91, "f1_no": 0.87}
+    # Use as trainer callback
+    trainer = SFTTrainer(..., compute_metrics=metrics.as_trainer_callback())
 """
 
-from typing import Optional
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
+from typing import Optional, List, Dict
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 import numpy as np
+import torch
 
 
 class ComputeMetrics:
     """
-    Compute classification metrics dynamically based on dataset labels.
+    Compute classification metrics with label-restricted argmax (v2).
     
-    This class computes accuracy, F1 scores (macro and per-class), and
-    other metrics based on the labels discovered from the dataset.
-    No hardcoded labels - everything is derived from metadata.
+    Key feature: Restricts predictions to valid label token IDs only,
+    preventing vocabulary leakage and special token predictions.
     
     Attributes:
-        metadata: Dataset metadata from DatasetBuilder.get_metadata()
-        tokenizer: Tokenizer for decoding predictions (optional, for logging)
         labels: List of label strings
-        label_token_ids: Dict mapping label string to token ID
+        valid_token_ids: List of valid label token IDs (for logits indexing)
         id_to_label: Dict mapping token ID to label string
+        tokenizer: Tokenizer for decoding (optional)
     """
     
-    def __init__(self, metadata: dict, tokenizer=None):
+    def __init__(
+        self,
+        labels: List[str],
+        valid_token_ids: List[int],
+        id_to_label: Dict[int, str],
+        tokenizer=None
+    ):
         """
-        Initialize ComputeMetrics with dataset metadata.
+        Initialize ComputeMetrics with label-restricted vocabulary (v2 API).
         
         Args:
-            metadata: Metadata dict from DatasetBuilder.get_metadata(tokenizer)
-            tokenizer: Optional tokenizer for decoding predictions in logs
-        
-        Raises:
-            ValueError: If metadata is missing required fields
+            labels: List of label strings (e.g., ["yes", "no"])
+            valid_token_ids: List of valid label token IDs (e.g., [3763, 912])
+            id_to_label: Dict mapping token ID to label string
+            tokenizer: Optional tokenizer for logging
         """
-        self.metadata = metadata
+        self.labels = labels
+        self.valid_token_ids = np.array(valid_token_ids)  # Convert to numpy for indexing
+        self.id_to_label = id_to_label
         self.tokenizer = tokenizer
-        
-        # Validate metadata
-        required_fields = ["labels", "label_token_ids", "id_to_label"]
-        for field in required_fields:
-            if field not in metadata or not metadata[field]:
-                raise ValueError(
-                    f"metadata must contain '{field}'. "
-                    "Call builder.get_metadata(tokenizer) with a tokenizer."
-                )
-        
-        self.labels = metadata["labels"]
-        self.label_token_ids = metadata["label_token_ids"]
-        self.id_to_label = metadata["id_to_label"]
-        self.valid_token_ids = sorted(self.label_token_ids.values())
+        # Create reverse mapping for per-class F1 computation
+        self.label_token_ids = {label: token_id for token_id, label in id_to_label.items()}
     
     def _detect_input_type(self, values: list) -> str:
         """Detect whether input is token IDs or label strings."""
@@ -301,8 +295,7 @@ class ComputeMetrics:
             )
         """
         seen = False
-        label_token_ids = self.label_token_ids
-        valid_token_ids = np.array(self.valid_token_ids)  # Convert to numpy for indexing
+        valid_token_ids = self.valid_token_ids  # Already numpy array
         labels_list = self.labels
         tokenizer = self.tokenizer
         
@@ -368,7 +361,7 @@ class ComputeMetrics:
             
             # Per-class F1
             for label in labels_list:
-                token_id = label_token_ids[label]
+                token_id = self.label_token_ids[label]
                 results[f"f1_{label}"] = f1_score(
                     gold, pred,
                     labels=[token_id],
