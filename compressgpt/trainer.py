@@ -46,7 +46,6 @@ class CompressTrainer:
             base_model_path="meta-llama/Llama-3.2-1B",
             dataset=dataset,
             metadata=metadata,
-            tokenizer=tokenizer,
             pipeline_config=PipelineConfig(stages=["ft", "qlora", "merge"])
         )
         results = trainer.train()
@@ -57,7 +56,7 @@ class CompressTrainer:
         base_model_path: str,
         dataset: Dataset,
         metadata: Dict,
-        tokenizer: AutoTokenizer,
+        tokenizer: Optional[AutoTokenizer] = None,
         pipeline_config: Optional[PipelineConfig] = None,
         lora_config: Optional[LoraConfig] = None,
         qlora_config: Optional[QLoraConfig] = None,
@@ -74,7 +73,7 @@ class CompressTrainer:
             base_model_path: Path or HF model ID for base model
             dataset: HuggingFace Dataset with 'text' column (prompt + response)
             metadata: Metadata dict from DatasetBuilder.get_metadata()
-            tokenizer: Tokenizer for the base model
+            tokenizer: Tokenizer for the base model. If None, will auto-load from base_model_path.
             pipeline_config: Pipeline configuration (stages, directories)
             lora_config: LoRA configuration for FT stage
             qlora_config: QLoRA configuration
@@ -85,10 +84,40 @@ class CompressTrainer:
             check_compatibility: Run model compatibility check before training
         """
         self.base_model_path = base_model_path
+        self.hf_token = hf_token
+        
+        # Auto-load tokenizer if not provided
+        if tokenizer is None:
+            is_local = os.path.exists(base_model_path)
+            if not is_local:
+                logger.info(f"🔍 Model '{base_model_path}' not found locally. Will load from HuggingFace...")
+                if hf_token is None:
+                    import getpass
+                    logger.info("⚠️  Model may require authentication.")
+                    use_token = input("Do you have a HuggingFace token? (y/n): ").strip().lower()
+                    if use_token == 'y':
+                        self.hf_token = getpass.getpass("Enter your HuggingFace token: ")
+                        hf_token = self.hf_token
+                    else:
+                        logger.info("Attempting without token (may fail for gated models)...")
+            
+            logger.info(f"📥 Loading tokenizer from: {base_model_path}")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                base_model_path,
+                token=hf_token
+            )
+        else:
+            self.tokenizer = tokenizer
+        
+        # Clean dataset - keep only 'text' column for SFTTrainer
+        required_cols = ['text']
+        extra_cols = [col for col in dataset.column_names if col not in required_cols]
+        if extra_cols:
+            logger.info(f"Removing extra columns from dataset: {extra_cols}")
+            dataset = dataset.remove_columns(extra_cols)
+        
         self.dataset = dataset
         self.metadata = metadata
-        self.tokenizer = tokenizer
-        self.hf_token = hf_token
         self.train_test_split = train_test_split
         self.seed = seed
         

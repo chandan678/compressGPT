@@ -27,9 +27,11 @@ Example usage:
 """
 
 import re
+import os
 import torch
-from typing import Optional
+from typing import Optional, Union
 from tqdm import tqdm
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class ModelRunner:
@@ -54,32 +56,82 @@ class ModelRunner:
     
     def __init__(
         self,
-        model,
-        tokenizer,
-        metadata: dict,
+        model: Union[str, AutoModelForCausalLM],
+        tokenizer: Union[str, AutoTokenizer, None] = None,
+        metadata: dict = None,
         device: Optional[str] = None,
         batch_size: int = 8,
+        hf_token: Optional[str] = None,
     ):
         """
         Initialize the ModelRunner.
         
         Args:
-            model: HuggingFace model (AutoModelForCausalLM or similar)
-            tokenizer: Tokenizer for the model
-            metadata: Metadata dict from DatasetBuilder.get_metadata(tokenizer)
+            model: Either a loaded HuggingFace model OR a model path/ID string.
+                   If string and not a local path, will load from HuggingFace.
+            tokenizer: Either a loaded tokenizer, a tokenizer path/ID, or None.
+                      If None and model is a string, will load matching tokenizer.
+            metadata: Metadata dict from DatasetBuilder.get_metadata(tokenizer).
+                     Required if tokenizer needs validation.
             device: Device for inference. If None, uses model's device or cuda/mps/cpu
             batch_size: Batch size for inference
+            hf_token: HuggingFace token for gated/private models. Required if model
+                     is a remote path that needs authentication.
         """
-        self.model = model
-        self.tokenizer = tokenizer
+        # Load model if string path/ID provided
+        if isinstance(model, str):
+            model_path = model
+            is_local = os.path.exists(model_path)
+            
+            if not is_local:
+                print(f"🔍 Model '{model_path}' not found locally. Loading from HuggingFace...")
+                if hf_token is None:
+                    import getpass
+                    print("⚠️  Model may require authentication.")
+                    use_token = input("Do you have a HuggingFace token? (y/n): ").strip().lower()
+                    if use_token == 'y':
+                        hf_token = getpass.getpass("Enter your HuggingFace token: ")
+                    else:
+                        print("Attempting to load without token (may fail for gated models)...")
+                        hf_token = None
+            
+            print(f"📥 Loading model from {'local path' if is_local else 'HuggingFace'}: {model_path}")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                token=hf_token,
+                device_map="auto"
+            )
+            
+            # Load tokenizer if not provided
+            if tokenizer is None:
+                print(f"📥 Loading tokenizer: {model_path}")
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    model_path,
+                    token=hf_token
+                )
+            elif isinstance(tokenizer, str):
+                print(f"📥 Loading tokenizer: {tokenizer}")
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    tokenizer,
+                    token=hf_token
+                )
+            else:
+                self.tokenizer = tokenizer
+        else:
+            # Model already loaded
+            self.model = model
+            if tokenizer is None:
+                raise ValueError("tokenizer must be provided when model is pre-loaded")
+            self.tokenizer = tokenizer
+        
         self.metadata = metadata
         self.batch_size = batch_size
         
         # Determine device
         if device is not None:
             self.device = device
-        elif hasattr(model, 'device'):
-            self.device = model.device
+        elif hasattr(self.model, 'device'):
+            self.device = self.model.device
         elif torch.cuda.is_available():
             self.device = "cuda"
         elif torch.backends.mps.is_available():
@@ -88,27 +140,36 @@ class ModelRunner:
             self.device = "cpu"
         
         # Validate metadata has token IDs
-        if not metadata.get("label_token_ids"):
+        if metadata is not None and not metadata.get("label_token_ids"):
             raise ValueError(
                 "metadata must contain label_token_ids. "
                 "Call builder.get_metadata(tokenizer) with a tokenizer."
             )
         
-        # Store mappings from metadata
-        # label_token_ids: {"yes": 3763, "no": 645} - tokens for " yes", " no" (with space)
-        self.label_token_ids = metadata["label_token_ids"]
-        self.id_to_label = metadata["id_to_label"]
-        self.labels = metadata["labels"]
-        self.valid_token_ids = set(self.label_token_ids.values())
-        
-        # Build reverse lookup: lowercase label -> canonical label
-        # This handles case variations like "Yes" -> "yes"
-        self._label_lookup = {label.lower(): label for label in self.labels}
-        
-        # Pre-compile regex for label extraction (case-insensitive)
-        # Match any of the valid labels as whole words
-        pattern = r'\b(' + '|'.join(re.escape(label) for label in self.labels) + r')\b'
-        self._label_pattern = re.compile(pattern, re.IGNORECASE)
+        # Store mappings from metadata if provided
+        if metadata is not None:
+            # label_token_ids: {"yes": 3763, "no": 645} - tokens for " yes", " no" (with space)
+            self.label_token_ids = metadata["label_token_ids"]
+            self.id_to_label = metadata["id_to_label"]
+            self.labels = metadata["labels"]
+            self.valid_token_ids = set(self.label_token_ids.values())
+            
+            # Build reverse lookup: lowercase label -> canonical label
+            # This handles case variations like "Yes" -> "yes"
+            self._label_lookup = {label.lower(): label for label in self.labels}
+            
+            # Pre-compile regex for label extraction (case-insensitive)
+            # Match any of the valid labels as whole words
+            pattern = r'\b(' + '|'.join(re.escape(label) for label in self.labels) + r')\b'
+            self._label_pattern = re.compile(pattern, re.IGNORECASE)
+        else:
+            # Metadata not provided - runner can still be used for raw inference
+            self.label_token_ids = None
+            self.id_to_label = None
+            self.labels = None
+            self.valid_token_ids = None
+            self._label_lookup = None
+            self._label_pattern = None
     
     def _extract_label_from_text(self, text: str) -> Optional[str]:
         """
@@ -210,6 +271,9 @@ class ModelRunner:
             Tuple of (predictions, gold_labels) as lists of token IDs.
             Unrecognized predictions get token ID -1 (UNKNOWN_TOKEN_ID).
         """
+        if self.metadata is None:
+            raise ValueError("metadata is required for run(). Provide metadata during initialization.")
+        
         self.model.eval()
         predictions = []
         gold_labels = []
