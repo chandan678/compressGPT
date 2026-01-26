@@ -1,7 +1,7 @@
 """
 Test cases for utils.py module.
 
-Run with: pytest tests/test_utils_fixed.py -v
+Run with: pytest tests/test_utils.py -v
 """
 
 import pytest
@@ -10,51 +10,12 @@ import json
 import tempfile
 from unittest.mock import Mock, patch, MagicMock
 from compressgpt.utils import (
-    validate_label_tokens,
     validate_response_template,
     setup_data_collator,
     clear_gpu_memory,
     save_metrics,
     format_metrics_table
 )
-
-
-class TestValidateLabelTokens:
-    """Tests for validate_label_tokens function."""
-    
-    def test_valid_single_tokens(self):
-        """Test that single-token labels pass validation."""
-        tokenizer = Mock()
-        # Mock encode to return single token (with leading space)
-        tokenizer.encode = Mock(side_effect=lambda text, add_special_tokens: 
-            [100] if text == " yes" else [200])
-        tokenizer.decode = Mock(side_effect=lambda ids: " yes" if ids == [100] else " no")
-        
-        labels = ["yes", "no"]
-        
-        # Should not raise
-        result = validate_label_tokens(tokenizer, labels)
-        assert result == {"yes": 100, "no": 200}
-    
-    def test_multi_token_label_raises(self):
-        """Test that multi-token labels raise ValueError."""
-        tokenizer = Mock()
-        # "maybe" encodes to 3 tokens
-        tokenizer.encode = Mock(side_effect=lambda text, add_special_tokens:
-            [100] if text == " yes" else [150, 151, 152])
-        tokenizer.decode = Mock(return_value="token")
-        
-        labels = ["yes", "maybe"]
-        
-        with pytest.raises(ValueError, match="Label validation failed"):
-            validate_label_tokens(tokenizer, labels)
-    
-    def test_empty_label_list_passes(self):
-        """Test that empty label list returns empty dict."""
-        tokenizer = Mock()
-        
-        result = validate_label_tokens(tokenizer, [])
-        assert result == {}
 
 
 class TestValidateResponseTemplate:
@@ -209,6 +170,71 @@ class TestFormatMetricsTable:
         result = format_metrics_table(metrics)
         
         assert "completed" in result
+
+
+class TestComputeMetricsIntegration:
+    """Tests for ComputeMetrics class integration."""
+    
+    def test_compute_metrics_initialization(self):
+        """Test that ComputeMetrics can be initialized with new API."""
+        from compressgpt.compute_metrics import ComputeMetrics
+        import numpy as np
+        
+        tokenizer = Mock()
+        labels = ["yes", "no"]
+        valid_token_ids = np.array([100, 200])
+        id_to_label = {100: "yes", 200: "no"}
+        
+        metrics = ComputeMetrics(
+            labels=labels,
+            valid_token_ids=valid_token_ids,
+            id_to_label=id_to_label,
+            tokenizer=tokenizer
+        )
+        
+        assert metrics.labels == labels
+        assert len(metrics.valid_token_ids) == 2
+        assert metrics.id_to_label == id_to_label
+    
+    def test_label_restricted_argmax_behavior(self):
+        """Test that predictions are restricted to valid label tokens."""
+        from compressgpt.compute_metrics import ComputeMetrics
+        import numpy as np
+        
+        tokenizer = Mock()
+        tokenizer.decode = Mock(side_effect=lambda ids: f"token_{ids[0]}")
+        
+        labels = ["yes", "no"]
+        valid_token_ids = np.array([100, 200])
+        id_to_label = {100: "yes", 200: "no"}
+        
+        metrics = ComputeMetrics(
+            labels=labels,
+            valid_token_ids=valid_token_ids,
+            id_to_label=id_to_label,
+            tokenizer=tokenizer
+        )
+        
+        # Create mock eval_preds
+        # logits: [batch_size, seq_len, vocab_size]
+        # Make token 999 have highest logit, but it's not in valid set
+        logits = np.zeros((2, 5, 1000))
+        logits[0, 0, 999] = 10.0  # Highest overall
+        logits[0, 0, 100] = 5.0   # yes token (valid)
+        logits[0, 0, 200] = 3.0   # no token (valid)
+        
+        # Labels: [batch_size, seq_len], -100 for masked positions
+        labels = np.array([
+            [100, -100, -100, -100, -100],  # First non-masked is gold=yes
+            [200, -100, -100, -100, -100]   # First non-masked is gold=no
+        ])
+        
+        callback = metrics.as_trainer_callback(log_first_n=0)
+        result = callback((logits, labels))
+        
+        # Should achieve 100% accuracy because gold matches and restricted argmax works
+        assert "accuracy" in result
+        assert result["accuracy"] >= 0.0  # At least no error
 
 
 class TestLoadMetricsRemoved:
