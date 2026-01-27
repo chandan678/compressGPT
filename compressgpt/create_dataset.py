@@ -82,6 +82,7 @@ class DatasetBuilder:
         keep_fields: bool = False,
         output_path: Optional[str] = None,
         label_prefix: str = " ",
+        hf_token: Optional[str] = None,
     ):
         """
         Initialize model-aware DatasetBuilder.
@@ -102,6 +103,7 @@ class DatasetBuilder:
             keep_fields: If True, keep original prompt/response columns for debugging
             output_path: If provided, auto-save dataset after build()
             label_prefix: Prefix for label tokenization (default " " for proper spacing)
+            hf_token: HuggingFace API token for gated/private models
         
         Raises:
             ValueError: If template placeholders don't match input_column_map keys
@@ -120,6 +122,7 @@ class DatasetBuilder:
         self.keep_fields = keep_fields
         self.output_path = output_path
         self.label_prefix = label_prefix
+        self.hf_token = hf_token
         
         # Load CSV data
         logger.info(f"📂 Loading data from: {data_path}")
@@ -129,7 +132,7 @@ class DatasetBuilder:
         # Load tokenizer
         if tokenizer is None:
             logger.info(f"📥 Loading tokenizer from: {model_id}")
-            self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, token=self.hf_token)
         else:
             self.tokenizer = tokenizer
             logger.info(f"  Using provided tokenizer")

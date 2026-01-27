@@ -133,12 +133,12 @@ class TestCompressTrainerInit:
         trainer = CompressTrainer(
             model_id="mock-model",
             dataset_builder=mock_dataset_builder,
-            stages=["ft", "qlora", "merge"],
+            stages=["ft", "recovery", "merge"],
             run_dir="output/my_run"
         )
         
         assert trainer.ft_output_dir == "output/my_run/ft_adapter"
-        assert trainer.qlora_output_dir == "output/my_run/qlora_adapter"
+        assert trainer.recovery_output_dir == "output/my_run/recovery_adapter"
         assert trainer.merged_output_dir == "output/my_run/merged_model"
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
@@ -171,7 +171,7 @@ class TestCompressTrainerConfig:
         )
         
         assert isinstance(trainer.ft_config, LoraConfig)
-        assert isinstance(trainer.qlora_config, QLoraConfig)
+        assert isinstance(trainer.recovery_config, QLoraConfig)
         assert isinstance(trainer.training_config, TrainingConfig)
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
@@ -332,17 +332,17 @@ class TestCompressTrainerStageValidation:
         assert "ft" in trainer.stages
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
-    def test_valid_stage_qlora(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
-        """Test that 'qlora' is a valid stage."""
+    def test_valid_stage_recovery(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test that 'recovery' is a valid stage."""
         mock_auto_tokenizer.return_value = mock_tokenizer
         
         trainer = CompressTrainer(
             model_id="mock-model",
             dataset_builder=mock_dataset_builder,
-            stages=["qlora"]
+            stages=["recovery"]
         )
         
-        assert "qlora" in trainer.stages
+        assert "recovery" in trainer.stages
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
     def test_valid_stage_merge(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
@@ -365,7 +365,7 @@ class TestCompressTrainerStageValidation:
         trainer = CompressTrainer(
             model_id="mock-model",
             dataset_builder=mock_dataset_builder,
-            stages=["ft", "qlora", "merge"]
+            stages=["ft", "recovery", "merge"]
         )
         
-        assert trainer.stages == ["ft", "qlora", "merge"]
+        assert trainer.stages == ["ft", "recovery", "merge"]
