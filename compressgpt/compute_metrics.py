@@ -23,7 +23,7 @@ Example usage (v2):
 """
 
 from typing import Optional, List, Dict
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 import numpy as np
 import torch
 
@@ -62,8 +62,8 @@ class ComputeMetrics:
         self.valid_token_ids = np.array(valid_token_ids)  # Convert to numpy for indexing
         self.id_to_label = id_to_label
         self.tokenizer = tokenizer
-        # Create reverse mapping for per-class F1 computation
-        self.label_token_ids = {label: token_id for token_id, label in id_to_label.items()}
+        # Create reverse mapping for per-class F1 computation (filter to valid labels only)
+        self.label_token_ids = {lbl: tid for tid, lbl in self.id_to_label.items() if lbl in set(self.labels)}
     
     def _detect_input_type(self, values: list) -> str:
         """Detect whether input is token IDs or label strings."""
@@ -310,6 +310,9 @@ class ComputeMetrics:
                 l_row = labels[i]
                 
                 # Find first non-masked position (where label != -100)
+                # CRITICAL: This extracts the FIRST token after the response trigger,
+                # not "the" from "the answer is yes". The DataCollatorForCompletionOnlyLM
+                # masks everything before response_trigger, so first unmasked token IS the label.
                 idxs = np.where(l_row != -100)[0]
                 if idxs.size == 0:
                     continue
@@ -317,8 +320,8 @@ class ComputeMetrics:
                 pos = int(idxs[0])
                 gold_id = int(l_row[pos])
                 
-                # Validate gold label is in our valid set
-                if gold_id not in valid_token_ids:
+                # Validate gold label is in our valid set (use numpy's isin for array membership)
+                if not np.isin(gold_id, valid_token_ids):
                     unknown_gold_count += 1
                     continue
                 
@@ -326,9 +329,11 @@ class ComputeMetrics:
                 step_logits = logits[i, pos, :]
                 
                 # CRITICAL: Restrict to label tokens only (not full vocab)
+                # This prevents the model from predicting arbitrary tokens like "the", "answer", etc.
+                # and forces classification behavior over valid labels only.
                 label_logits = step_logits[valid_token_ids]  # [num_labels]
                 
-                # Argmax among label tokens
+                # Argmax among label tokens only (e.g., max(logits["yes"], logits["no"]))
                 best_label_idx = int(label_logits.argmax())
                 pred_id = int(valid_token_ids[best_label_idx])
                 
