@@ -6,7 +6,7 @@ training parameters.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 
 @dataclass
@@ -200,3 +200,173 @@ class PipelineConfig:
         
         if self.merged_output_dir is None:
             self.merged_output_dir = f"{self.output_dir}/merged_model"
+
+
+@dataclass
+class QuantizationConfig:
+    """
+    Shared quantization configuration for training and deployment.
+    
+    This config is used both during compress stages (to induce quantization noise)
+    and during deployment (to produce quantized model files). Using the same config
+    ensures training conditions match deployment conditions.
+    
+    Attributes:
+        bits: Quantization bits (4 or 8)
+        compute_dtype: Compute dtype for quantization ("float16", "bfloat16", "float32")
+        quant_type: Quantization type ("nf4", "fp4", "int8" - used for 4-bit and 8-bit)
+        use_double_quant: Use double quantization for better quality (4-bit only)
+        quant_storage: Storage type for quantized weights ("auto", "uint8", "int8")
+    
+    Example:
+        # 8-bit quantization for training and deployment
+        config = QuantizationConfig(bits=8, quant_type="int8")
+        
+        # 4-bit NF4 quantization (common for LLaMA models)
+        config = QuantizationConfig(
+            bits=4,
+            quant_type="nf4",
+            use_double_quant=True
+        )
+    """
+    bits: Literal[4, 8] = 4
+    compute_dtype: str = "float16"
+    quant_type: str = "nf4"
+    use_double_quant: bool = True
+    quant_storage: str = "auto"
+    
+    def __post_init__(self):
+        """Validate configuration."""
+        if self.bits not in [4, 8]:
+            raise ValueError(f"bits must be 4 or 8, got {self.bits}")
+        
+        if self.compute_dtype not in ["float16", "bfloat16", "float32"]:
+            raise ValueError(
+                f"compute_dtype must be 'float16', 'bfloat16', or 'float32', got {self.compute_dtype}"
+            )
+        
+        if self.bits == 4:
+            if self.quant_type not in ["nf4", "fp4"]:
+                raise ValueError(f"quant_type for 4-bit must be 'nf4' or 'fp4', got {self.quant_type}")
+        elif self.bits == 8:
+            if self.quant_type != "int8":
+                raise ValueError(f"quant_type for 8-bit must be 'int8', got {self.quant_type}")
+    
+    def to_bnb_config(self):
+        """Convert to BitsAndBytesConfig for model loading."""
+        from transformers import BitsAndBytesConfig
+        import torch
+        
+        # Map string dtype to torch dtype
+        dtype_map = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        
+        if self.bits == 4:
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=dtype_map[self.compute_dtype],
+                bnb_4bit_quant_type=self.quant_type,
+                bnb_4bit_use_double_quant=self.use_double_quant,
+            )
+        else:  # 8-bit
+            return BitsAndBytesConfig(
+                load_in_8bit=True,
+                bnb_8bit_compute_dtype=dtype_map[self.compute_dtype],
+            )
+
+
+@dataclass
+class DeploymentConfig:
+    """
+    Configuration for deployment stage output formats.
+    
+    The deploy stage takes a merged FP16 model and converts it to the requested
+    deployment format(s). Multiple formats can be enabled simultaneously.
+    
+    Attributes:
+        save_merged_fp16: Save unquantized merged model (baseline for comparisons)
+        save_quantized_4bit: Save 4-bit quantized model using bitsandbytes
+        save_quantized_8bit: Save 8-bit quantized model using bitsandbytes
+        save_gguf_f16: Save GGUF format with FP16 weights
+        save_gguf_q4_0: Save GGUF format with Q4_0 quantization
+        save_gguf_q4_1: Save GGUF format with Q4_1 quantization
+        save_gguf_q5_0: Save GGUF format with Q5_0 quantization
+        save_gguf_q5_1: Save GGUF format with Q5_1 quantization
+        save_gguf_q8_0: Save GGUF format with Q8_0 quantization
+        quant_config: QuantizationConfig to use for quantized formats (4bit/8bit)
+        
+    Example:
+        # Deploy as 4-bit quantized + GGUF Q4_0
+        config = DeploymentConfig(
+            save_quantized_4bit=True,
+            save_gguf_q4_0=True,
+            quant_config=QuantizationConfig(bits=4, quant_type="nf4")
+        )
+        
+        # Deploy all GGUF formats for comparison
+        config = DeploymentConfig(
+            save_gguf_f16=True,
+            save_gguf_q4_0=True,
+            save_gguf_q8_0=True
+        )
+    """
+    save_merged_fp16: bool = True
+    save_quantized_4bit: bool = False
+    save_quantized_8bit: bool = False
+    save_gguf_f16: bool = False
+    save_gguf_q4_0: bool = False
+    save_gguf_q4_1: bool = False
+    save_gguf_q5_0: bool = False
+    save_gguf_q5_1: bool = False
+    save_gguf_q8_0: bool = False
+    quant_config: Optional[QuantizationConfig] = None
+    
+    def __post_init__(self):
+        """Validate and set defaults."""
+        # If any quantized format requested but no quant_config, create default
+        needs_quant_config = self.save_quantized_4bit or self.save_quantized_8bit
+        if needs_quant_config and self.quant_config is None:
+            # Default to 4-bit if save_quantized_4bit, else 8-bit
+            bits = 4 if self.save_quantized_4bit else 8
+            self.quant_config = QuantizationConfig(bits=bits)
+        
+        # Validate quant_config matches requested formats
+        if self.quant_config is not None:
+            if self.save_quantized_4bit and self.quant_config.bits != 4:
+                raise ValueError("save_quantized_4bit=True but quant_config.bits != 4")
+            if self.save_quantized_8bit and self.quant_config.bits != 8:
+                raise ValueError("save_quantized_8bit=True but quant_config.bits != 8")
+    
+    def has_any_output(self) -> bool:
+        """Check if at least one output format is enabled."""
+        return any([
+            self.save_merged_fp16,
+            self.save_quantized_4bit,
+            self.save_quantized_8bit,
+            self.save_gguf_f16,
+            self.save_gguf_q4_0,
+            self.save_gguf_q4_1,
+            self.save_gguf_q5_0,
+            self.save_gguf_q5_1,
+            self.save_gguf_q8_0,
+        ])
+    
+    def get_gguf_formats(self) -> List[str]:
+        """Get list of enabled GGUF quantization formats."""
+        formats = []
+        if self.save_gguf_f16:
+            formats.append("f16")
+        if self.save_gguf_q4_0:
+            formats.append("q4_0")
+        if self.save_gguf_q4_1:
+            formats.append("q4_1")
+        if self.save_gguf_q5_0:
+            formats.append("q5_0")
+        if self.save_gguf_q5_1:
+            formats.append("q5_1")
+        if self.save_gguf_q8_0:
+            formats.append("q8_0")
+        return formats

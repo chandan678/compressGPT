@@ -7,7 +7,7 @@ Run with: pytest tests/test_trainer.py -v
 import pytest
 from unittest.mock import Mock, MagicMock, PropertyMock, patch
 from compressgpt.trainer import CompressTrainer
-from compressgpt.config import LoraConfig, QLoraConfig, TrainingConfig
+from compressgpt.config import LoraConfig, QLoraConfig, TrainingConfig, QuantizationConfig, DeploymentConfig
 
 
 @pytest.fixture
@@ -133,13 +133,15 @@ class TestCompressTrainerInit:
         trainer = CompressTrainer(
             model_id="mock-model",
             dataset_builder=mock_dataset_builder,
-            stages=["ft", "recovery", "merge"],
+            stages=["ft", "compress_8bit", "merge"],
             run_dir="output/my_run"
         )
         
         assert trainer.ft_output_dir == "output/my_run/ft_adapter"
         assert trainer.recovery_output_dir == "output/my_run/recovery_adapter"
         assert trainer.merged_output_dir == "output/my_run/merged_model"
+        assert trainer.quantized_8bit_dir == "output/my_run/quantized_8bit"
+        assert trainer.quantized_4bit_dir == "output/my_run/quantized_4bit"
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
     def test_metrics_computer_initialized(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
@@ -173,6 +175,13 @@ class TestCompressTrainerConfig:
         assert isinstance(trainer.ft_config, LoraConfig)
         assert isinstance(trainer.recovery_config, QLoraConfig)
         assert isinstance(trainer.training_config, TrainingConfig)
+        assert isinstance(trainer.quant_config_8bit, QuantizationConfig)
+        assert isinstance(trainer.quant_config_4bit, QuantizationConfig)
+        assert isinstance(trainer.deployment_config, DeploymentConfig)
+        
+        # Verify default quantization configs
+        assert trainer.quant_config_8bit.bits == 8
+        assert trainer.quant_config_4bit.bits == 4
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
     def test_custom_configs_used(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
@@ -181,18 +190,24 @@ class TestCompressTrainerConfig:
         
         custom_ft = LoraConfig(r=32, lora_alpha=64)
         custom_training = TrainingConfig(num_train_epochs=10)
+        custom_quant_4bit = QuantizationConfig(bits=4, quant_type="fp4")
+        custom_deploy = DeploymentConfig(save_gguf_q4_0=True)
         
         trainer = CompressTrainer(
             model_id="mock-model",
             dataset_builder=mock_dataset_builder,
             stages=["ft"],
             ft_config=custom_ft,
-            training_config=custom_training
+            training_config=custom_training,
+            quant_config_4bit=custom_quant_4bit,
+            deployment_config=custom_deploy
         )
         
         assert trainer.ft_config.r == 32
         assert trainer.ft_config.lora_alpha == 64
         assert trainer.training_config.num_train_epochs == 10
+        assert trainer.quant_config_4bit.quant_type == "fp4"
+        assert trainer.deployment_config.save_gguf_q4_0 == True
 
 
 class TestCompressTrainerDatasetSplit:
@@ -332,8 +347,47 @@ class TestCompressTrainerStageValidation:
         assert "ft" in trainer.stages
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
+    def test_valid_stage_compress_8bit(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test that 'compress_8bit' is a valid stage."""
+        mock_auto_tokenizer.return_value = mock_tokenizer
+        
+        trainer = CompressTrainer(
+            model_id="mock-model",
+            dataset_builder=mock_dataset_builder,
+            stages=["compress_8bit"]
+        )
+        
+        assert "compress_8bit" in trainer.stages
+    
+    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
+    def test_valid_stage_compress_4bit(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test that 'compress_4bit' is a valid stage."""
+        mock_auto_tokenizer.return_value = mock_tokenizer
+        
+        trainer = CompressTrainer(
+            model_id="mock-model",
+            dataset_builder=mock_dataset_builder,
+            stages=["compress_4bit"]
+        )
+        
+        assert "compress_4bit" in trainer.stages
+    
+    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
+    def test_valid_stage_deploy(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test that 'deploy' is a valid stage."""
+        mock_auto_tokenizer.return_value = mock_tokenizer
+        
+        trainer = CompressTrainer(
+            model_id="mock-model",
+            dataset_builder=mock_dataset_builder,
+            stages=["deploy"]
+        )
+        
+        assert "deploy" in trainer.stages
+    
+    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
     def test_valid_stage_recovery(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
-        """Test that 'recovery' is a valid stage."""
+        """Test that 'recovery' is a valid stage (deprecated but still supported)."""
         mock_auto_tokenizer.return_value = mock_tokenizer
         
         trainer = CompressTrainer(
@@ -358,14 +412,45 @@ class TestCompressTrainerStageValidation:
         assert "merge" in trainer.stages
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
-    def test_multiple_stages(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
-        """Test multiple stages can be specified."""
+    def test_multiple_stages_new(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test multiple new atomic stages can be specified."""
         mock_auto_tokenizer.return_value = mock_tokenizer
         
         trainer = CompressTrainer(
             model_id="mock-model",
             dataset_builder=mock_dataset_builder,
-            stages=["ft", "recovery", "merge"]
+            stages=["ft", "compress_8bit", "merge", "deploy"]
         )
         
-        assert trainer.stages == ["ft", "recovery", "merge"]
+        assert trainer.stages == ["ft", "compress_8bit", "merge", "deploy"]
+    
+    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
+    def test_multiple_stages_deprecated(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test multiple deprecated stages still work."""
+        mock_auto_tokenizer.return_value = mock_tokenizer
+        
+        trainer = CompressTrainer(
+            model_id="mock-model",
+            dataset_builder=mock_dataset_builder,
+            stages=["ft", "quantize_8bit", "recovery", "merge"]
+        )
+        
+        assert trainer.stages == ["ft", "quantize_8bit", "recovery", "merge"]
+    
+    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
+    def test_deprecated_stages_show_warning(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test that deprecated stage names trigger a warning."""
+        mock_auto_tokenizer.return_value = mock_tokenizer
+        
+        with patch('compressgpt.trainer.logger') as mock_logger:
+            trainer = CompressTrainer(
+                model_id="mock-model",
+                dataset_builder=mock_dataset_builder,
+                stages=["ft", "quantize_8bit", "recovery"]
+            )
+            
+            # Check that warning was logged
+            mock_logger.warning.assert_called_once()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert "deprecated" in warning_msg.lower()
+            assert "compress_" in warning_msg
