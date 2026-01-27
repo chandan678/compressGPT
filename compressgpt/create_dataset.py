@@ -82,6 +82,7 @@ class DatasetBuilder:
         keep_fields: bool = False,
         output_path: Optional[str] = None,
         label_prefix: str = " ",
+        response_trigger: Optional[str] = None,
         hf_token: Optional[str] = None,
     ):
         """
@@ -103,6 +104,8 @@ class DatasetBuilder:
             keep_fields: If True, keep original prompt/response columns for debugging
             output_path: If provided, auto-save dataset after build()
             label_prefix: Prefix for label tokenization (default " " for proper spacing)
+            response_trigger: Optional explicit response trigger (e.g., "Answer:"). If not provided,
+                auto-extracts from prompt_template (text after last {placeholder})
             hf_token: HuggingFace API token for gated/private models
         
         Raises:
@@ -149,9 +152,14 @@ class DatasetBuilder:
         # Extract placeholders from template
         self._template_placeholders = set(re.findall(r'\{(\w+)\}', prompt_template))
         
-        # Extract response trigger (text after last placeholder)
-        self.response_trigger = self._extract_response_trigger()
-        logger.info(f"🎯 Response trigger: {self.response_trigger!r}")
+        # Set or extract response trigger
+        if response_trigger is not None:
+            self.response_trigger = response_trigger
+            logger.info(f"🎯 Response trigger (provided): {self.response_trigger!r}")
+        else:
+            # Auto-extract from template (text after last placeholder)
+            self.response_trigger = self._extract_response_trigger()
+            logger.info(f"🎯 Response trigger (extracted): {self.response_trigger!r}")
         
         # Validate inputs
         self._validate()
@@ -194,7 +202,7 @@ class DatasetBuilder:
             raise ValueError("No placeholders found in prompt_template")
         
         # Only strip trailing whitespace, preserve leading space for tokenization consistency
-        response_trigger = self.prompt_template[last_placeholder_end:].rstrip()
+        response_trigger = self.prompt_template[last_placeholder_end:].strip()
         
         if not response_trigger:
             raise ValueError(
