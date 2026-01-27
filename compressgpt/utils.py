@@ -95,43 +95,34 @@ def validate_response_template(template: str, allow_special_tokens: bool = False
                 )
 
 
-def setup_data_collator(tokenizer, response_template: str):
+def setup_data_collator(tokenizer, response_template: str, *, allow_fallback: bool = False):
     """
-    Create DataCollatorForCompletionOnlyLM with the given response template.
-    
-    This collator masks the prompt tokens so the model only learns to predict
-    the response tokens during training.
-    
-    Args:
-        tokenizer: HuggingFace tokenizer
-        response_template: Template string that triggers the response
-        
-    Returns:
-        DataCollatorForCompletionOnlyLM instance
-        
-    Example:
-        >>> collator = setup_data_collator(tokenizer, "Answer:")
+    Create a completion-only collator that masks prompt tokens so loss is computed
+    only on response tokens (classification label tokens in your case).
     """
+    response_template = response_template.strip()
+
     try:
         from trl import DataCollatorForCompletionOnlyLM
         return DataCollatorForCompletionOnlyLM(
             tokenizer=tokenizer,
-            response_template=response_template
+            response_template=response_template,
         )
-    except ImportError:
-        # Fallback: use standard DataCollatorForLanguageModeling
-        # This will train on full sequences, not just completions
+    except ImportError as e:
+        if not allow_fallback:
+            raise ImportError(
+                "trl is required for DataCollatorForCompletionOnlyLM. "
+                "Install `trl` or call with allow_fallback=True (not recommended for label-only training)."
+            ) from e
+
         from transformers import DataCollatorForLanguageModeling
         import warnings
         warnings.warn(
-            "DataCollatorForCompletionOnlyLM not available. "
-            "Using DataCollatorForLanguageModeling instead. "
-            "The model will be trained on full sequences, not just completions."
+            "Falling back to DataCollatorForLanguageModeling (full-sequence loss). "
+            "This changes the training objective and may hurt label-only classification prompting."
         )
-        return DataCollatorForLanguageModeling(
-            tokenizer=tokenizer,
-            mlm=False  # Causal LM, not masked LM
-        )
+        return DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
 
 
 def clear_gpu_memory():
