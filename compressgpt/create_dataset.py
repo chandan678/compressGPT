@@ -193,7 +193,8 @@ class DatasetBuilder:
         if last_placeholder_end == 0:
             raise ValueError("No placeholders found in prompt_template")
         
-        response_trigger = self.prompt_template[last_placeholder_end:].strip()
+        # Only strip trailing whitespace, preserve leading space for tokenization consistency
+        response_trigger = self.prompt_template[last_placeholder_end:].rstrip()
         
         if not response_trigger:
             raise ValueError(
