@@ -859,7 +859,10 @@ class CompressTrainer:
             
             if "metrics" in result:
                 metrics = result["metrics"]
-                print(f"  Accuracy: {metrics.get('accuracy', 0):.4f}")
-                print(f"  F1 Macro: {metrics.get('f1_macro', 0):.4f}")
+                # Metrics from trainer.evaluate() have 'eval_' prefix
+                accuracy = metrics.get('eval_accuracy', metrics.get('accuracy', 0))
+                f1_macro = metrics.get('eval_f1_macro', metrics.get('f1_macro', 0))
+                print(f"  Accuracy: {accuracy:.4f}")
+                print(f"  F1 Macro: {f1_macro:.4f}")
         
         print("=" * 60)
