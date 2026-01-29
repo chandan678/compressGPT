@@ -4,6 +4,7 @@ Test cases for utils.py module.
 Run with: pytest tests/test_utils.py -v
 """
 
+import sys
 import pytest
 import torch
 import json
@@ -45,12 +46,23 @@ class TestValidateResponseTemplate:
 class TestSetupDataCollator:
     """Tests for setup_data_collator function."""
     
+    @patch.dict('sys.modules', {'trl': MagicMock()})
     def test_returns_collator(self):
-        """Test that function returns a data collator."""
+        """Test that function returns a data collator when trl is available."""
+        import sys
+        mock_trl = sys.modules['trl']
+        mock_collator = MagicMock()
+        mock_trl.DataCollatorForCompletionOnlyLM = MagicMock(return_value=mock_collator)
+        
         tokenizer = Mock()
         tokenizer.pad_token_id = 0
         
-        collator = setup_data_collator(tokenizer, "Answer:")
+        # Need to reimport to pick up the mocked trl
+        from importlib import reload
+        import compressgpt.utils
+        reload(compressgpt.utils)
+        
+        collator = compressgpt.utils.setup_data_collator(tokenizer, "Answer:")
         
         assert collator is not None
 

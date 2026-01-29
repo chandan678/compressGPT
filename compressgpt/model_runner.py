@@ -13,9 +13,9 @@ Example usage:
     from compressgpt import DatasetBuilder, ModelRunner, ComputeMetrics
     
     # Build dataset and get metadata
-    builder = DatasetBuilder(...)
-    dataset = builder.build()
-    metadata = builder.get_metadata(tokenizer)
+    builder = DatasetBuilder(...).build()
+    dataset = builder.dataset
+    metadata = builder.metadata
     
     # Run inference (returns token IDs for both pred and gold)
     runner = ModelRunner(model, tokenizer, metadata)

@@ -407,11 +407,17 @@ class DatasetBuilder:
         Returns:
             Metadata dictionary with model info, LabelSpace, and counts
         """
+        label_space_dict = self._label_space.to_dict()
+        
         return {
             "model_id": self.model_id,
             "model_mode": self.model_mode,
             "response_trigger": self.response_trigger,
-            "label_space": self._label_space.to_dict(),
+            "label_space": label_space_dict,
+            # Flatten label_space for backward compatibility with ModelRunner
+            "label_token_ids": label_space_dict["label_token_ids"],
+            "id_to_label": label_space_dict["id_to_label"],
+            "labels": label_space_dict["labels"],
             "label_counts": self._label_counts.copy(),
             "num_samples": len(self._formatted_data),
             "is_train": self.is_train,

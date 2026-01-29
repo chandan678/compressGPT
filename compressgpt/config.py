@@ -332,12 +332,20 @@ class DeploymentConfig:
     
     def __post_init__(self):
         """Validate and set defaults."""
+        # Cannot request both 4-bit and 8-bit simultaneously (single quant_config)
+        if self.save_quantized_4bit and self.save_quantized_8bit:
+            raise ValueError(
+                "Cannot enable both save_quantized_4bit and save_quantized_8bit. "
+                "Use separate DeploymentConfig instances or provide explicit quant_config."
+            )
+        
         # If any quantized format requested but no quant_config, create default
         needs_quant_config = self.save_quantized_4bit or self.save_quantized_8bit
         if needs_quant_config and self.quant_config is None:
             # Default to 4-bit if save_quantized_4bit, else 8-bit
             bits = 4 if self.save_quantized_4bit else 8
-            self.quant_config = QuantizationConfig(bits=bits)
+            quant_type = "nf4" if bits == 4 else "int8"
+            self.quant_config = QuantizationConfig(bits=bits, quant_type=quant_type)
         
         # Validate quant_config matches requested formats
         if self.quant_config is not None:
