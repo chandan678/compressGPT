@@ -504,6 +504,7 @@ class CompressTrainer:
             eval_dataset=self.eval_dataset,
             data_collator=data_collator,
             compute_metrics=compute_metrics_fn,
+            preprocess_logits_for_metrics=self.metrics_computer.get_preprocess_logits(),
             callbacks=([EarlyStoppingCallback(
                 early_stopping_patience=self.training_config.early_stopping_patience,
                 early_stopping_threshold=self.training_config.early_stopping_threshold,
@@ -724,6 +725,7 @@ class CompressTrainer:
             processing_class=self.tokenizer,
             data_collator=data_collator,
             compute_metrics=self.metrics_computer.as_trainer_callback(),
+            preprocess_logits_for_metrics=self.metrics_computer.get_preprocess_logits(),
             callbacks=callbacks
         )
         
@@ -1015,6 +1017,7 @@ class CompressTrainer:
             processing_class=self.tokenizer,
             data_collator=data_collator,
             compute_metrics=self.metrics_computer.as_trainer_callback(),
+            preprocess_logits_for_metrics=self.metrics_computer.get_preprocess_logits(),
             callbacks=callbacks
         )
         

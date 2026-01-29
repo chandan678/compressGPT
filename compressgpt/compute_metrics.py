@@ -301,7 +301,7 @@ class ComputeMetrics:
         
         def compute_metrics(eval_preds):
             nonlocal seen
-            logits, labels = eval_preds  # logits: [B, T, V], labels: [B, T]
+            logits, labels = eval_preds  # logits: [B, T, V] or [B, T, num_labels], labels: [B, T]
             
             gold, pred = [], []
             unknown_gold_count = 0
@@ -325,16 +325,27 @@ class ComputeMetrics:
                     unknown_gold_count += 1
                     continue
                 
-                # Extract logits at the answer position: [V]
+                # Extract logits at the answer position: [V] or [num_labels]
                 step_logits = logits[i, pos, :]
                 
-                # CRITICAL: Restrict to label tokens only (not full vocab)
-                # This prevents the model from predicting arbitrary tokens like "the", "answer", etc.
-                # and forces classification behavior over valid labels only.
-                label_logits = step_logits[valid_token_ids]  # [num_labels]
+                # Check if logits are already filtered (from preprocess_logits_for_metrics)
+                if step_logits.shape[0] == len(valid_token_ids):
+                    # Already filtered to label tokens only by preprocess_logits_for_metrics
+                    # Shape is [num_labels], indices 0..num_labels-1 correspond to valid_token_ids
+                    label_logits = step_logits
+                else:
+                    # Full vocabulary - need to filter
+                    # CRITICAL: Restrict to label tokens only (not full vocab)
+                    # This prevents the model from predicting arbitrary tokens like "the", "answer", etc.
+                    # and forces classification behavior over valid labels only.
+                    label_logits = step_logits[valid_token_ids]  # [num_labels]
                 
-                # Argmax among label tokens only (e.g., max(logits["yes"], logits["no"]))
+                # Argmax among label tokens: returns index 0..num_labels-1
                 best_label_idx = int(label_logits.argmax())
+                
+                # CRITICAL: Map index back to actual token ID
+                # After preprocessing, best_label_idx is in range [0, num_labels-1]
+                # We need to map it to the actual token ID using valid_token_ids
                 pred_id = int(valid_token_ids[best_label_idx])
                 
                 gold.append(gold_id)
@@ -377,3 +388,53 @@ class ComputeMetrics:
             return results
         
         return compute_metrics
+
+    def get_preprocess_logits(self):
+        """
+        Create a preprocess_logits_for_metrics function for HuggingFace Trainer.
+        
+        CRITICAL FOR MEMORY: Filters logits to only label tokens BEFORE accumulation.
+        This reduces memory from ~128k vocab to ~2-10 label tokens (massive reduction!).
+        
+        Without this, eval uses: [batch_size, seq_len, 128k] * 4 bytes = huge memory
+        With this, eval uses: [batch_size, seq_len, num_labels] * 4 bytes = tiny memory
+        
+        Returns:
+            A preprocess function that filters logits to label tokens only
+            
+        Example:
+            trainer = SFTTrainer(
+                model=model,
+                args=training_args,
+                compute_metrics=metrics.as_trainer_callback(),
+                preprocess_logits_for_metrics=metrics.get_preprocess_logits(),  # ADD THIS
+            )
+        """
+        valid_token_ids = self.valid_token_ids
+        
+        def preprocess_logits(logits, labels):
+            """
+            Filter logits to only label tokens before storing.
+            
+            Args:
+                logits: Tensor [B, T, V] or tuple/list containing tensor
+                labels: Tensor [B, T] with label IDs
+                
+            Returns:
+                Filtered logits [B, T, num_labels] - only label token logits
+            """
+            import torch
+            
+            # Handle tuple/list wrapping (some models return (logits,))
+            if isinstance(logits, (tuple, list)):
+                logits = logits[0]
+            
+            # Create device-safe tensor for indexing (critical for performance)
+            # Must be same device as logits and dtype=long for indexing
+            ids = torch.tensor(valid_token_ids, device=logits.device, dtype=torch.long)
+            
+            # Use index_select for efficient filtering: [B, T, V] -> [B, T, num_labels]
+            # This is faster than fancy indexing and works on all devices
+            return torch.index_select(logits, dim=-1, index=ids)
+        
+        return preprocess_logits

@@ -107,11 +107,11 @@ class TrainingConfig:
         run_name: Name for the training run
         early_stopping_patience: Patience for early stopping (0 = disabled)
         early_stopping_threshold: Minimum improvement threshold for early stopping
-        eval_accumulation_steps: Accumulate eval batches before moving to CPU (None=auto, 1=move each batch)
+        eval_accumulation_steps: Accumulate eval batches before moving to CPU (1=safe default, higher=more speed but more memory)
     """
     num_train_epochs: int = 6
     per_device_train_batch_size: int = 4
-    per_device_eval_batch_size: int = 4
+    per_device_eval_batch_size: int = 2  # Conservative for memory
     gradient_accumulation_steps: int = 2
     learning_rate: float = 1e-5
     warmup_ratio: float = 0.05
@@ -133,7 +133,7 @@ class TrainingConfig:
     run_name: Optional[str] = None
     early_stopping_patience: int = 2
     early_stopping_threshold: float = 0.0
-    eval_accumulation_steps: Optional[int] = None  # None = auto-scale based on GPU memory
+    eval_accumulation_steps: Optional[int] = 1  # 1 = safe default, increase for more GPU memory
     
     def __post_init__(self):
         """Validate configuration."""
