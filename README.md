@@ -10,6 +10,11 @@ Unlike rigid training scripts, compressGPT allows developers to define **custom 
 
 ## 🚀 Quick Start
 
+To install:
+```bash
+pip install compressgpt-core
+```
+
 Below is a complete example that transforms a CSV dataset into a compressed, deployment-ready 4-bit Llama-3 model.
 
 ```python
