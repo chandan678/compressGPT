@@ -94,7 +94,9 @@ class TrainingConfig:
         max_seq_length: Maximum sequence length
         logging_steps: Log metrics every N steps
         eval_strategy: Evaluation strategy ("epoch", "steps", or "no")
+        eval_steps: Evaluate every N steps (only when eval_strategy="steps")
         save_strategy: Save checkpoint strategy ("epoch", "steps", or "no")
+        save_steps: Save checkpoint every N steps (only when save_strategy="steps")
         save_total_limit: Maximum number of checkpoints to keep
         load_best_model_at_end: Load best model at end of training
         metric_for_best_model: Metric to use for selecting best model
@@ -105,6 +107,7 @@ class TrainingConfig:
         run_name: Name for the training run
         early_stopping_patience: Patience for early stopping (0 = disabled)
         early_stopping_threshold: Minimum improvement threshold for early stopping
+        eval_accumulation_steps: Accumulate eval batches before moving to CPU (None=auto, 1=move each batch)
     """
     num_train_epochs: int = 6
     per_device_train_batch_size: int = 4
@@ -117,7 +120,9 @@ class TrainingConfig:
     max_seq_length: int = 256
     logging_steps: int = 20
     eval_strategy: str = "epoch"
+    eval_steps: Optional[int] = None
     save_strategy: str = "epoch"
+    save_steps: Optional[int] = None
     save_total_limit: Optional[int] = 2
     load_best_model_at_end: bool = True
     metric_for_best_model: str = "f1_macro"
@@ -128,6 +133,7 @@ class TrainingConfig:
     run_name: Optional[str] = None
     early_stopping_patience: int = 2
     early_stopping_threshold: float = 0.0
+    eval_accumulation_steps: Optional[int] = None  # None = auto-scale based on GPU memory
     
     def __post_init__(self):
         """Validate configuration."""

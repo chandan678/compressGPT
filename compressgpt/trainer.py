@@ -493,6 +493,7 @@ class CompressTrainer:
             report_to=self.training_config.report_to,
             run_name=run_name,
             dataset_text_field="text",
+            eval_accumulation_steps=self.training_config.eval_accumulation_steps,
         )
         
         # Train recovery adapter
@@ -691,9 +692,9 @@ class CompressTrainer:
             max_length=self.training_config.max_seq_length,
             logging_steps=self.training_config.logging_steps,
             eval_strategy="steps",  # Eval during training for progress visibility
-            eval_steps=500,  # Eval every 500 steps
+            eval_steps=self.training_config.eval_steps or 500,  # Default 500 steps if not specified
             save_strategy="steps",  # Must match eval_strategy when load_best_model_at_end=True
-            save_steps=500,  # Save every 500 steps
+            save_steps=self.training_config.save_steps or 500,  # Default 500 steps if not specified
             save_total_limit=self.training_config.save_total_limit,
             load_best_model_at_end=self.training_config.load_best_model_at_end,
             metric_for_best_model=self.training_config.metric_for_best_model,
@@ -703,7 +704,7 @@ class CompressTrainer:
             report_to=self.training_config.report_to,
             run_name=run_name,
             dataset_text_field="text",
-            eval_accumulation_steps=1,  # Prevent OOM on MPS/small GPUs
+            eval_accumulation_steps=self.training_config.eval_accumulation_steps,
         )
         
         # Setup trainer
@@ -995,7 +996,7 @@ class CompressTrainer:
             report_to=self.training_config.report_to,
             run_name=run_name,
             dataset_text_field="text",
-            eval_accumulation_steps=1,  # Prevent OOM on small GPUs
+            eval_accumulation_steps=self.training_config.eval_accumulation_steps,
         )
         
         # Setup trainer
