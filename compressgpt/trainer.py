@@ -41,14 +41,13 @@ class CompressTrainer:
     
     Orchestrates compression-focused workflow:
     1. FT: Fine-tune on FP16 base (establish accuracy baseline)
-    2. Quantize: Explicit 8-bit/4-bit quantization (compress model)
-    3. Recovery: Train adapters on quantized base (compensate quantization error)
-    4. Merge: Merge adapters back to FP16 (prepare for deployment quantization)
+    2. Compress: Atomic stage that Quantizes -> Trains Recovery -> Merges to FP16
+    3. Deploy: Convert final model to production formats (GGUF, Quantized, etc.)
     
     Valid stage combinations:
-    - ["ft", "merge"]: Basic LoRA fine-tuning
-    - ["ft", "quantize_8bit", "recovery", "merge"]: Full 8-bit compression
-    - ["ft", "quantize_4bit", "recovery", "merge"]: Full 4-bit compression
+    - ["ft", "deploy"]: Basic LoRA fine-tuning + deployment
+    - ["ft", "compress_8bit", "deploy"]: Full 8-bit compression pipeline
+    - ["ft", "compress_4bit", "deploy"]: Full 4-bit compression pipeline
     
     Example:
         from compressgpt import DatasetBuilder, CompressTrainer
@@ -59,7 +58,7 @@ class CompressTrainer:
         trainer = CompressTrainer(
             model_id="meta-llama/Llama-3.2-1B",
             dataset_builder=builder,
-            stages=["ft", "quantize_8bit", "recovery", "merge"]
+            stages=["ft", "compress_4bit", "deploy"]
         )
         results = trainer.run()
     """
@@ -131,8 +130,8 @@ class CompressTrainer:
             logger.warning(
                 "⚠️  Using deprecated stage names. Please migrate to new atomic stages:\n"
                 "  Old: ['ft', 'quantize_8bit', 'recovery', 'merge']\n"
-                "  New: ['ft', 'compress_8bit', 'merge']\n"
-                "  The compress_* stages now include recovery automatically."
+                "  New: ['ft', 'compress_8bit', 'deploy']\n"
+                "  The compress_* stages now include recovery and merge automatically."
             )
         
         logger.info("=" * 60)

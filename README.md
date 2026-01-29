@@ -60,3 +60,39 @@ results = trainer.run()
 
 print("Training complete!")
 print(results)
+```
+
+## 📦 Deployment & Artifacts
+
+### Deployment Methods
+The final stage of the pipeline, **`deploy`**, automatically converts your optimized model into rigorous production formats. Controlled by `DeploymentConfig`, it supports:
+
+*   **GGUF (`save_gguf_q4_0`, etc.)**: The gold standard for **CPU inference**. These files can be loaded directly into [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.com).
+*   **Quantized 4-bit (`save_quantized_4bit`)**: Pre-shrunk BitsAndBytes models. Ideal for low-VRAM **GPU inference** using Python/Transformers.
+*   **Merged FP16 (`save_merged_fp16`)**: The canonical high-precision model. Use this for **vLLM / TGI servers** or further research.
+
+### Saving Models & Trade-offs
+A unique feature of compressGPT is that **every stage saves its own model and metrics**. This allows you to deploy different versions of the *same model* to different devices based on their constraints.
+
+**1. Default Outputs (`runs/default/`)**
+Every stage you run automatically saves its result:
+*   `ft_adapter/`: High-accuracy LoRA adapter (best for Cloud/GPU).
+*   `compress_4bit_merged/`: Quantized & recovered model (best for accuracy/size balance).
+*   `metrics.json`: Compare `ft` vs `compress_4bit` accuracy to make data-driven deployment decisions.
+
+**2. Deploy Outputs (`runs/default/deploy/`)**
+Production-ready artifacts are generated here **only if enabled** in `DeploymentConfig`:
+
+```text
+runs/default/deploy/
+├── merged_fp16/        # Universal format (vLLM, TGI)
+├── quantized_4bit/     # Python-native compressed (Transformers)
+└── gguf/
+    ├── model-f16.gguf  # High precision GGUF
+    └── model-q4_0.gguf # Optimized Edge/CPU GGUF
+```
+
+---
+
+## ⚠️ Current Support
+Currently, compressGPT is optimized for **Classification Tasks** (e.g., Sentiment, Intent Detection, Spam Filtering). Support for Generation tasks (RAG, Chat) is coming soon.
