@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "compressgpt"
+name = "compressGPT"
 version = "0.1.0"
 description = "LLM Compression and Optimization Library - Build the smallest runnable models that preserve target accuracy"
 readme = "README.md"
