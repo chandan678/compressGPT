@@ -432,19 +432,6 @@ class TestCompressTrainerStageValidation:
         assert "deploy" in trainer.stages
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
-    def test_valid_stage_recovery(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
-        """Test that 'recovery' is a valid stage (deprecated but still supported)."""
-        mock_auto_tokenizer.return_value = mock_tokenizer
-        
-        trainer = CompressTrainer(
-            model_id="mock-model",
-            dataset_builder=mock_dataset_builder,
-            stages=["recovery"]
-        )
-        
-        assert "recovery" in trainer.stages
-    
-    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
     def test_valid_stage_merge(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
         """Test that 'merge' is a valid stage."""
         mock_auto_tokenizer.return_value = mock_tokenizer
@@ -471,32 +458,14 @@ class TestCompressTrainerStageValidation:
         assert trainer.stages == ["ft", "compress_8bit", "merge", "deploy"]
     
     @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
-    def test_multiple_stages_deprecated(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
-        """Test multiple deprecated stages still work."""
+    def test_invalid_deprecated_stages_raise(self, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
+        """Test that old deprecated stage names now raise ValueError."""
         mock_auto_tokenizer.return_value = mock_tokenizer
         
-        trainer = CompressTrainer(
-            model_id="mock-model",
-            dataset_builder=mock_dataset_builder,
-            stages=["ft", "quantize_8bit", "recovery", "merge"]
-        )
-        
-        assert trainer.stages == ["ft", "quantize_8bit", "recovery", "merge"]
-    
-    @patch('compressgpt.trainer.AutoTokenizer.from_pretrained')
-    @patch('compressgpt.trainer.logger')
-    def test_deprecated_stages_show_warning(self, mock_logger, mock_auto_tokenizer, mock_dataset_builder, mock_tokenizer):
-        """Test that deprecated stage names trigger a warning."""
-        mock_auto_tokenizer.return_value = mock_tokenizer
-        
-        trainer = CompressTrainer(
-            model_id="mock-model",
-            dataset_builder=mock_dataset_builder,
-            stages=["ft", "quantize_8bit", "recovery"]
-        )
-        
-        # Check that warning was logged
-        mock_logger.warning.assert_called()
-        # Get all warning calls
-        warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
-        assert any("deprecated" in str(call).lower() for call in warning_calls)
+        # Old stage names should now raise errors
+        with pytest.raises(ValueError, match="Invalid stages"):
+            CompressTrainer(
+                model_id="mock-model",
+                dataset_builder=mock_dataset_builder,
+                stages=["ft", "quantize_8bit", "recovery", "merge"]
+            )

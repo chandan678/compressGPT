@@ -1,5 +1,5 @@
 """
-CompressGPT Trainer v2 - Model Compression Pipeline
+CompressGPT Trainer - Model Compression Pipeline
 
 Orchestrates model compression workflow: FT -> Quantize -> Recovery -> Merge
 with automatic metadata extraction from DatasetBuilder.
@@ -116,8 +116,7 @@ class CompressTrainer:
         # Validate stages (support both old and new names)
         valid_stages = {
             "ft", 
-            "compress_8bit", "compress_4bit",  # New atomic stages
-            "quantize_8bit", "quantize_4bit", "recovery",  # Deprecated
+            "compress_8bit", "compress_4bit",
             "merge", "deploy"
         }
         invalid = set(stages) - valid_stages
@@ -128,7 +127,7 @@ class CompressTrainer:
         deprecated_stages = {"quantize_8bit", "quantize_4bit", "recovery"}
         if any(s in deprecated_stages for s in stages):
             logger.warning(
-                "⚠️  Using deprecated stage names. Please migrate to new atomic stages:\n"
+                "Using deprecated stage names. Please migrate to new atomic stages:\n"
                 "  Old: ['ft', 'quantize_8bit', 'recovery', 'merge']\n"
                 "  New: ['ft', 'compress_8bit', 'deploy']\n"
                 "  The compress_* stages now include recovery and merge automatically."
@@ -159,13 +158,13 @@ class CompressTrainer:
             raise ValueError("Metadata missing 'label_space' field")
         
         # Load tokenizer (must match model_id)
-        logger.info(f"📥 Loading tokenizer from: {model_id}")
+        logger.info(f"Loading tokenizer from: {model_id}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
         
         # Set padding token if not present (required for batch training)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-            logger.info(f"✓ Set pad_token to eos_token: {self.tokenizer.eos_token}")
+            logger.info(f"Set pad_token to eos_token: {self.tokenizer.eos_token}")
         
         # Reconstruct LabelSpace
         self.label_space = LabelSpace.from_dict(label_space_dict, self.tokenizer)
@@ -175,8 +174,8 @@ class CompressTrainer:
         if not self.response_trigger:
             raise ValueError("Metadata missing 'response_trigger' field")
         
-        logger.info(f"✓ Response trigger: {self.response_trigger!r}")
-        logger.info(f"✓ LabelSpace: {len(self.label_space.labels)} labels")
+        logger.info(f"Response trigger: {self.response_trigger!r}")
+        logger.info(f"LabelSpace: {len(self.label_space.labels)} labels")
         logger.info(f"  {self.label_space.labels}")
         
         # Initialize configs with defaults
@@ -226,7 +225,7 @@ class CompressTrainer:
         # Store results
         self.results = {}
         
-        logger.info("✓ CompressTrainer initialized")
+        logger.info("CompressTrainer initialized")
         logger.info("=" * 60 + "\n")
     
     def _detect_device(self) -> str:
@@ -254,7 +253,7 @@ class CompressTrainer:
                 with open(adapter_config_path, 'r') as f:
                     adapter_config = json.load(f)
                 base_model = adapter_config.get("base_model_name_or_path", model_id)
-                logger.info(f"⚠️  Detected LoRA adapter. Base model: {base_model}")
+                logger.info(f"Detected LoRA adapter. Base model: {base_model}")
                 return base_model, True
             except Exception as e:
                 logger.warning(f"Failed to read adapter_config.json: {e}")
@@ -268,7 +267,7 @@ class CompressTrainer:
             # Check if quantization/recovery stages are enabled
             if any(stage in self.stages for stage in ["quantize_8bit", "quantize_4bit", "recovery"]):
                 warnings.warn(
-                    "⚠️  Apple Silicon (MPS) detected with quantization/recovery stages.\n"
+                    "Apple Silicon (MPS) detected with quantization/recovery stages.\n"
                     "BitsAndBytes quantization is NOT supported on MPS.\n"
                     "Training will fail. Consider:\n"
                     "  1. Use only 'ft' stage: stages=['ft', 'merge']\n"
@@ -280,7 +279,7 @@ class CompressTrainer:
             logger.info(f"Device: {self.device_type.upper()} (Apple Silicon)")
         elif self.device_type == "cpu":
             warnings.warn(
-                "⚠️  No GPU detected. Training will be extremely slow on CPU.",
+                "No GPU detected. Training will be extremely slow on CPU.",
                 RuntimeWarning,
                 stacklevel=2
             )
@@ -324,7 +323,7 @@ class CompressTrainer:
         Returns:
             Quantized model
         """
-        logger.info(f"📦 Applying {bits}-bit quantization to {model_path}")
+        logger.info(f"Applying {bits}-bit quantization to {model_path}")
         
         # Get quantization config
         quant_config = self.quant_config_8bit if bits == 8 else self.quant_config_4bit
@@ -342,9 +341,9 @@ class CompressTrainer:
             # Enable gradient checkpointing for memory efficiency
             model.gradient_checkpointing_enable()
             model.enable_input_require_grads()
-            logger.info("✓ Gradient checkpointing enabled for training")
+            logger.info("Gradient checkpointing enabled for training")
         
-        logger.info(f"✓ Model quantized to {bits}-bit")
+        logger.info(f"Model quantized to {bits}-bit")
         return model
     
     def _compress_atomic(self, bits: int) -> Dict:
@@ -392,14 +391,14 @@ class CompressTrainer:
         os.makedirs(recovery_dir, exist_ok=True)
         os.makedirs(merged_dir, exist_ok=True)
         
-        # Step 1: Determine base model path
+        # Determine base model path
         base_model_path, is_adapter = self._get_base_model_path(self.model_id)
         if is_adapter:
-            logger.info(f"⚠️  Using base model from adapter config: {base_model_path}")
+            logger.info(f"Using base model from adapter config: {base_model_path}")
         
         # Check if we should use FT checkpoint or base model
         if os.path.exists(self.ft_output_dir):
-            logger.info(f"📦 Using FT checkpoint as starting point")
+            logger.info(f"Using FT checkpoint as starting point")
             # Load FT adapter and merge to get FP16 base for quantization
             logger.info(f"Loading base model: {base_model_path}")
             base_model = AutoModelForCausalLM.from_pretrained(
@@ -417,7 +416,7 @@ class CompressTrainer:
             temp_merged_path = os.path.join(self.run_dir, "temp_ft_merged")
             merged_ft.save_pretrained(temp_merged_path)
             self.tokenizer.save_pretrained(temp_merged_path)
-            logger.info(f"✓ FT merged model saved to {temp_merged_path}")
+            logger.info(f"FT merged model saved to {temp_merged_path}")
             
             # Clear memory
             del base_model, ft_model, merged_ft
@@ -426,11 +425,11 @@ class CompressTrainer:
             # Now quantize the merged FT model
             quantize_base_path = temp_merged_path
         else:
-            logger.info(f"📦 Using base model (no FT checkpoint found)")
+            logger.info(f"Using base model (no FT checkpoint found)")
             quantize_base_path = base_model_path
         
-        # Step 2: Load quantized model for recovery training
-        logger.info(f"\n--- Step 2: Train Recovery on {bits}-bit Quantized Model ---")
+        # Load quantized model for recovery training
+        logger.info(f"\n--- Train Recovery on {bits}-bit Quantized Model ---")
         model = self._apply_quantization(
             model_path=quantize_base_path,
             bits=bits,
@@ -521,10 +520,10 @@ class CompressTrainer:
         # Save recovery adapter
         trainer.model.save_pretrained(recovery_dir)
         self.tokenizer.save_pretrained(recovery_dir)
-        logger.info(f"✓ Recovery adapter saved to {recovery_dir}")
+        logger.info(f"Recovery adapter saved to {recovery_dir}")
         
-        # Step 3: Merge recovery adapter back to FP16
-        logger.info(f"\n--- Step 3: Merge Recovery Adapter to FP16 ---")
+        # Merge recovery adapter back to FP16
+        logger.info(f"\n--- Merge Recovery Adapter to FP16 ---")
         logger.info("Loading base model in FP16...")
         base_model = AutoModelForCausalLM.from_pretrained(
             quantize_base_path,
@@ -543,9 +542,9 @@ class CompressTrainer:
         merged_model.save_pretrained(merged_dir)
         self.tokenizer.save_pretrained(merged_dir)
         
-        logger.info(f"✅ Compress {bits}-bit stage complete!")
-        logger.info(f"   Recovery adapter: {recovery_dir}")
-        logger.info(f"   Merged FP16 model: {merged_dir}")
+        logger.info(f"Compress {bits}-bit stage complete!")
+        logger.info(f" Recovery adapter: {recovery_dir}")
+        logger.info(f" Merged FP16 model: {merged_dir}")
         
         return {
             "status": "success",
@@ -732,15 +731,15 @@ class CompressTrainer:
         import time
         num_samples = len(self.train_dataset)
         eff_bs = self.training_config.per_device_train_batch_size * self.training_config.gradient_accumulation_steps
-        logger.info(f"🚀 Training: {num_samples} samples, {self.training_config.num_train_epochs} epochs, batch_size={eff_bs}")
+        logger.info(f"Training: {num_samples} samples, {self.training_config.num_train_epochs} epochs, batch_size={eff_bs}")
         
         start_time = time.time()
         trainer.train()
         duration = time.time() - start_time
-        logger.info(f"✓ Training completed in {duration/60:.1f} minutes")
+        logger.info(f"Training completed in {duration/60:.1f} minutes")
         
         # Evaluate
-        logger.info("📊 Evaluating...")
+        logger.info("Evaluating...")
         metrics = trainer.evaluate()
         
         # Clear memory after eval (critical for MPS)
@@ -748,7 +747,7 @@ class CompressTrainer:
             clear_gpu_memory()
         
         # Save model
-        logger.info(f"💾 Saving FT adapter to {output_dir}")
+        logger.info(f"Saving FT adapter to {output_dir}")
         trainer.save_model(output_dir)
         
         # Print metrics

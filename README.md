@@ -101,3 +101,8 @@ runs/default/deploy/
 
 ## ⚠️ Current Support
 Currently, compressGPT is optimized for **Classification Tasks** (e.g., Sentiment, Intent Detection, Spam Filtering). Support for Generation tasks (RAG, Chat) is coming soon.
+
+## Notes on Development
+
+This project was built quickly and iteratively while converting an academic thesis into a working system.
+AI tools were used to accelerate implementation; all core ideas, abstractions, and evaluation logic come directly from my thesis and were reasoned about and validated manually.

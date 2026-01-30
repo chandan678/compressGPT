@@ -121,9 +121,9 @@ class LabelSpace:
         # Multi-token labels not yet supported
         self.single_token_labels = True
         
-        logger.info(f"✓ LabelSpace initialized with {len(self.labels)} labels")
-        logger.info(f"  Labels: {self.labels}")
-        logger.info(f"  Token IDs: {self.label_token_ids}")
+        logger.info(f"LabelSpace initialized with {len(self.labels)} labels")
+        logger.info(f"Labels: {self.labels}")
+        logger.info(f"Token IDs: {self.label_token_ids}")
     
     def to_dict(self) -> dict:
         """

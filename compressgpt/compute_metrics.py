@@ -1,10 +1,8 @@
 """
-Compute Metrics for compressGPT v2
-
 This module provides the ComputeMetrics class with label-restricted argmax
 for computing accuracy metrics on model predictions.
 
-Example usage (v2):
+Example usage:
     from compressgpt import DatasetBuilder, ComputeMetrics
     
     builder = DatasetBuilder(...)
@@ -30,7 +28,7 @@ import torch
 
 class ComputeMetrics:
     """
-    Compute classification metrics with label-restricted argmax (v2).
+    Compute classification metrics with label-restricted argmax.
     
     Key feature: Restricts predictions to valid label token IDs only,
     preventing vocabulary leakage and special token predictions.
@@ -50,7 +48,7 @@ class ComputeMetrics:
         tokenizer=None
     ):
         """
-        Initialize ComputeMetrics with label-restricted vocabulary (v2 API).
+        Initialize ComputeMetrics with label-restricted vocabulary.
         
         Args:
             labels: List of label strings (e.g., ["yes", "no"])

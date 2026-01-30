@@ -56,14 +56,6 @@ class DatasetBuilder:
     The text after the last placeholder (e.g., "Answer:") becomes the
     response_trigger for DataCollatorForCompletionOnlyLM.
     
-    Attributes:
-        data_path: Path to the input CSV file
-        model_id: HuggingFace model ID or local path
-        model_mode: "base", "instruct", or "auto" (auto-detected)
-        tokenizer: Loaded tokenizer from model_id
-        label_space: LabelSpace instance with token mappings
-        dataset: HuggingFace Dataset (available after build())
-        metadata: Complete metadata dict (available after build())
     """
     
     def __init__(
@@ -128,26 +120,26 @@ class DatasetBuilder:
         self.hf_token = hf_token
         
         # Load CSV data
-        logger.info(f"📂 Loading data from: {data_path}")
+        logger.info(f"Loading data from: {data_path}")
         self.dataframe = pd.read_csv(data_path)
         logger.info(f"  {len(self.dataframe)} rows loaded")
         
         # Load tokenizer
         if tokenizer is None:
-            logger.info(f"📥 Loading tokenizer from: {model_id}")
+            logger.info(f"Loading tokenizer from: {model_id}")
             self.tokenizer = AutoTokenizer.from_pretrained(model_id, token=self.hf_token)
         else:
             self.tokenizer = tokenizer
-            logger.info(f"  Using provided tokenizer")
+            logger.info(f"Using provided tokenizer")
         
         # Set padding token if not present (required for batch training)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-            logger.info(f"  Set pad_token to eos_token")
+            logger.info(f"Set pad_token to eos_token")
         
         # Detect model mode
         self.model_mode = self._detect_model_mode() if model_mode == "auto" else model_mode
-        logger.info(f"🔧 Model mode: {self.model_mode}")
+        logger.info(f"Model mode: {self.model_mode}")
         
         # Extract placeholders from template
         self._template_placeholders = set(re.findall(r'\{(\w+)\}', prompt_template))
@@ -155,11 +147,11 @@ class DatasetBuilder:
         # Set or extract response trigger
         if response_trigger is not None:
             self.response_trigger = response_trigger
-            logger.info(f"🎯 Response trigger (provided): {self.response_trigger!r}")
+            logger.info(f"Response trigger (provided): {self.response_trigger!r}")
         else:
             # Auto-extract from template (text after last placeholder)
             self.response_trigger = self._extract_response_trigger()
-            logger.info(f"🎯 Response trigger (extracted): {self.response_trigger!r}")
+            logger.info(f"Response trigger (extracted): {self.response_trigger!r}")
         
         # Validate inputs
         self._validate()
@@ -255,7 +247,7 @@ class DatasetBuilder:
             self (DatasetBuilder instance for chaining)
         """
         logger.info("\n" + "=" * 60)
-        logger.info("🔨 Building dataset")
+        logger.info("Building dataset")
         logger.info("=" * 60)
         
         self._formatted_data = []
@@ -288,7 +280,6 @@ class DatasetBuilder:
             self._label_counts[label] = self._label_counts.get(label, 0) + 1
         
         # Create LabelSpace (validates single-token constraint)
-        logger.info(f"🏷️  Creating LabelSpace with {len(collected_labels)} labels")
         self._label_space = LabelSpace(
             tokenizer=self.tokenizer,
             labels=sorted(collected_labels),
@@ -465,7 +456,7 @@ class DatasetBuilder:
     def _print_summary(self, skipped_nan: int, skipped_invalid_label: int) -> None:
         """Print a summary of the built dataset."""
         print("\n" + "=" * 60)
-        print("📊 Dataset Build Summary")
+        print("Dataset Build Summary")
         print("=" * 60)
         print(f"Source: {self.data_path}")
         print(f"Model: {self.model_id} ({self.model_mode})")
@@ -473,21 +464,21 @@ class DatasetBuilder:
         print("-" * 60)
         
         if skipped_nan > 0:
-            print(f"⚠️  Skipped {skipped_nan} rows due to missing (NaN) values")
+            print(f"Skipped {skipped_nan} rows due to missing (NaN) values")
         if skipped_invalid_label > 0:
-            print(f"⚠️  Skipped {skipped_invalid_label} rows due to invalid labels")
+            print(f"Skipped {skipped_invalid_label} rows due to invalid labels")
         
-        print(f"✅ Final dataset size: {len(self._formatted_data)} rows")
-        print(f"   Mode: {'Training' if self.is_train else 'Evaluation'}")
+        print(f"Final dataset size: {len(self._formatted_data)} rows")
+        print(f"Mode: {'Training' if self.is_train else 'Evaluation'}")
         print("-" * 60)
-        print("📋 Label distribution:")
+        print("Label distribution:")
         for label, count in sorted(self._label_counts.items()):
             pct = (count / len(self._formatted_data) * 100) if self._formatted_data else 0
             print(f"   '{label}': {count} ({pct:.1f}%)")
         print("-" * 60)
-        print(f"🔧 Response trigger for DataCollator: {self.response_trigger!r}")
-        print(f"🏷️  LabelSpace: {len(self._label_space.labels)} labels, single-token validated")
-        print(f"   Token IDs: {self._label_space.label_token_ids}")
+        print(f"Response trigger for DataCollator: {self.response_trigger!r}")
+        print(f"LabelSpace: {len(self._label_space.labels)} labels, single-token validated")
+        print(f"Token IDs: {self._label_space.label_token_ids}")
         print("=" * 60 + "\n")
     
     def save(self, output_path: Optional[str] = None) -> str:
@@ -519,5 +510,5 @@ class DatasetBuilder:
             for item in self._formatted_data:
                 f.write(json.dumps(item) + "\n")
         
-        logger.info(f"✅ Saved {len(self._formatted_data)} rows to '{path}'")
+        logger.info(f"Saved {len(self._formatted_data)} rows to '{path}'")
         return path
