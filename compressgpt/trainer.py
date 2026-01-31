@@ -72,6 +72,7 @@ class CompressTrainer:
         ft_config: Optional[LoraConfig] = None,
         recovery_config: Optional[QLoraConfig] = None,
         training_config: Optional[TrainingConfig] = None,
+        compress_training_config: Optional[TrainingConfig] = None,
         quant_config_8bit: Optional[QuantizationConfig] = None,
         quant_config_4bit: Optional[QuantizationConfig] = None,
         deployment_config: Optional[DeploymentConfig] = None,
@@ -90,7 +91,9 @@ class CompressTrainer:
             stages: List of stages (e.g., ["ft", "compress_8bit", "merge", "deploy"])
             ft_config: LoRA configuration for FT stage
             recovery_config: Recovery configuration (includes train_bits for quantization)
-            training_config: General training configuration
+            training_config: Training configuration for FT stage (also used for compress if compress_training_config not provided)
+            compress_training_config: Optional separate training configuration for compress stages.
+                If not provided, uses training_config. Useful for different epochs/LR for recovery training.
             quant_config_8bit: Quantization config for 8-bit compression (default: auto)
             quant_config_4bit: Quantization config for 4-bit compression (default: auto)
             deployment_config: Deployment output formats (default: merged FP16 only)
@@ -182,6 +185,8 @@ class CompressTrainer:
         self.ft_config = ft_config or LoraConfig()
         self.recovery_config = recovery_config or QLoraConfig()
         self.training_config = training_config or TrainingConfig()
+        # Compress training config defaults to training_config if not provided
+        self.compress_training_config = compress_training_config or self.training_config
         
         # Quantization configs (create defaults if not provided)
         self.quant_config_8bit = quant_config_8bit or QuantizationConfig(
@@ -466,32 +471,32 @@ class CompressTrainer:
             tokenizer=self.tokenizer
         ).as_trainer_callback(log_first_n=5)
         
-        # Training arguments
+        # Training arguments - use compress_training_config for recovery
         run_name = f"compress_{bits}bit_recovery"
         training_args = SFTConfig(
             output_dir=recovery_dir,
-            num_train_epochs=self.training_config.num_train_epochs,
-            per_device_train_batch_size=self.training_config.per_device_train_batch_size,
-            per_device_eval_batch_size=self.training_config.per_device_eval_batch_size,
-            gradient_accumulation_steps=self.training_config.gradient_accumulation_steps,
-            learning_rate=self.training_config.learning_rate,
-            warmup_ratio=self.training_config.warmup_ratio,
-            lr_scheduler_type=self.training_config.lr_scheduler_type,
-            weight_decay=self.training_config.weight_decay,
-            max_length=self.training_config.max_seq_length,
-            logging_steps=self.training_config.logging_steps,
-            eval_strategy=self.training_config.eval_strategy,
-            save_strategy=self.training_config.save_strategy,
-            save_total_limit=self.training_config.save_total_limit,
-            load_best_model_at_end=self.training_config.load_best_model_at_end,
-            metric_for_best_model=self.training_config.metric_for_best_model,
-            greater_is_better=self.training_config.greater_is_better,
-            fp16=self.training_config.fp16,
-            bf16=self.training_config.bf16,
-            report_to=self.training_config.report_to,
+            num_train_epochs=self.compress_training_config.num_train_epochs,
+            per_device_train_batch_size=self.compress_training_config.per_device_train_batch_size,
+            per_device_eval_batch_size=self.compress_training_config.per_device_eval_batch_size,
+            gradient_accumulation_steps=self.compress_training_config.gradient_accumulation_steps,
+            learning_rate=self.compress_training_config.learning_rate,
+            warmup_ratio=self.compress_training_config.warmup_ratio,
+            lr_scheduler_type=self.compress_training_config.lr_scheduler_type,
+            weight_decay=self.compress_training_config.weight_decay,
+            max_length=self.compress_training_config.max_seq_length,
+            logging_steps=self.compress_training_config.logging_steps,
+            eval_strategy=self.compress_training_config.eval_strategy,
+            save_strategy=self.compress_training_config.save_strategy,
+            save_total_limit=self.compress_training_config.save_total_limit,
+            load_best_model_at_end=self.compress_training_config.load_best_model_at_end,
+            metric_for_best_model=self.compress_training_config.metric_for_best_model,
+            greater_is_better=self.compress_training_config.greater_is_better,
+            fp16=self.compress_training_config.fp16,
+            bf16=self.compress_training_config.bf16,
+            report_to=self.compress_training_config.report_to,
             run_name=run_name,
             dataset_text_field="text",
-            eval_accumulation_steps=self.training_config.eval_accumulation_steps,
+            eval_accumulation_steps=self.compress_training_config.eval_accumulation_steps,
         )
         
         # Train recovery adapter
@@ -504,9 +509,9 @@ class CompressTrainer:
             compute_metrics=compute_metrics_fn,
             preprocess_logits_for_metrics=self.metrics_computer.get_preprocess_logits(),
             callbacks=([EarlyStoppingCallback(
-                early_stopping_patience=self.training_config.early_stopping_patience,
-                early_stopping_threshold=self.training_config.early_stopping_threshold,
-            )] if self.training_config.early_stopping_patience > 0 else []),
+                early_stopping_patience=self.compress_training_config.early_stopping_patience,
+                early_stopping_threshold=self.compress_training_config.early_stopping_threshold,
+            )] if self.compress_training_config.early_stopping_patience > 0 else []),
         )
         
         logger.info("🚀 Starting recovery training...")
@@ -583,19 +588,6 @@ class CompressTrainer:
             self.results["compress_4bit"] = self._compress_atomic(bits=4)
             clear_gpu_memory()
         
-        # Old separate stages (deprecated, but still supported)
-        if "quantize_8bit" in self.stages:
-            self.results["quantize_8bit"] = self._quantize_model(bits=8)
-            clear_gpu_memory()
-        
-        if "quantize_4bit" in self.stages:
-            self.results["quantize_4bit"] = self._quantize_model(bits=4)
-            clear_gpu_memory()
-        
-        if "recovery" in self.stages:
-            self.results["recovery"] = self._train_stage_recovery()
-            clear_gpu_memory()
-        
         # Merge stage
         if "merge" in self.stages:
             self.results["merge"] = self._merge_and_save()
@@ -608,7 +600,7 @@ class CompressTrainer:
         # Save all metrics
         metrics_path = os.path.join(self.run_dir, "metrics.json")
         save_metrics(self.results, metrics_path)
-        logger.info(f"✓ Metrics saved to {metrics_path}")
+        logger.info(f"Metrics saved to {metrics_path}")
         
         # Print summary
         self._print_summary()
@@ -648,16 +640,16 @@ class CompressTrainer:
         
         # Log actual device placement
         if hasattr(model, 'hf_device_map'):
-            logger.info(f"📍 Device map: {model.hf_device_map}")
+            logger.info(f"Device map: {model.hf_device_map}")
         else:
             model_device = next(model.parameters()).device
-            logger.info(f"📍 Model loaded on: {model_device}")
+            logger.info(f"Model loaded on: {model_device}")
         
         model.gradient_checkpointing_enable()
         
         # Log model size
         num_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"✓ Loaded {num_params/1e9:.2f}B parameters")
+        logger.info(f"Loaded {num_params/1e9:.2f}B parameters")
         if torch.cuda.is_available():
             logger.info(f"GPU memory: {torch.cuda.memory_allocated()/1e9:.2f} GB")
         elif torch.backends.mps.is_available():
@@ -821,10 +813,10 @@ class CompressTrainer:
         
         # Log device placement
         if hasattr(model, 'hf_device_map'):
-            logger.info(f"📍 Device map: {model.hf_device_map}")
+            logger.info(f"Device map: {model.hf_device_map}")
         else:
             model_device = next(model.parameters()).device
-            logger.info(f"📍 Model loaded on: {model_device}")
+            logger.info(f"Model loaded on: {model_device}")
         
         # Setup quantization config
         logger.info(f"Applying {bits}-bit quantization...")
@@ -860,11 +852,11 @@ class CompressTrainer:
             quantized_model = quantized_model.merge_and_unload()
         
         # Save quantized model
-        logger.info(f"💾 Saving {bits}-bit quantized model to {output_dir}")
+        logger.info(f"Saving {bits}-bit quantized model to {output_dir}")
         quantized_model.save_pretrained(output_dir)
         self.tokenizer.save_pretrained(output_dir)
         
-        logger.info(f"✓ {bits}-bit quantization complete")
+        logger.info(f"{bits}-bit quantization complete")
         
         return {
             "status": "completed",
@@ -1125,10 +1117,10 @@ class CompressTrainer:
         
         # Log actual device placement
         if hasattr(base_model, 'hf_device_map'):
-            logger.info(f"📍 Device map: {base_model.hf_device_map}")
+            logger.info(f"Device map: {base_model.hf_device_map}")
         else:
             model_device = next(base_model.parameters()).device
-            logger.info(f"📍 Model loaded on: {model_device}")
+            logger.info(f"Model loaded on: {model_device}")
         
         # Load and merge adapter if exists
         if adapter_path:
@@ -1142,11 +1134,11 @@ class CompressTrainer:
             model = base_model
         
         # Save merged model
-        logger.info(f"💾 Saving merged model to {output_dir}")
+        logger.info(f"Saving merged model to {output_dir}")
         model.save_pretrained(output_dir)
         self.tokenizer.save_pretrained(output_dir)
         
-        logger.info(f"✓ Merge complete (source: {merge_source})")
+        logger.info(f"Merge complete (source: {merge_source})")
         
         return {
             "status": "completed",
@@ -1171,7 +1163,7 @@ class CompressTrainer:
         logger.info("=" * 60)
         
         if not self.deployment_config.has_any_output():
-            logger.warning("⚠️  No deployment formats enabled in deployment_config")
+            logger.warning("No deployment formats enabled in deployment_config")
             return {"status": "skipped", "reason": "no_formats_enabled"}
         
         # Find source model (merged FP16 from previous stages)
@@ -1186,7 +1178,7 @@ class CompressTrainer:
         ]:
             if os.path.exists(candidate):
                 source_model_path = candidate
-                logger.info(f"📦 Source model: {source_model_path}")
+                logger.info(f"Source model: {source_model_path}")
                 break
         
         if not source_model_path:
@@ -1225,7 +1217,7 @@ class CompressTrainer:
         
         # Format 1: Merged FP16 (copy source)
         if self.deployment_config.save_merged_fp16:
-            logger.info("\n📦 Deploying: Merged FP16")
+            logger.info("\nDeploying: Merged FP16")
             fp16_dir = os.path.join(deploy_dir, "merged_fp16")
             os.makedirs(fp16_dir, exist_ok=True)
             
@@ -1239,7 +1231,7 @@ class CompressTrainer:
             model.save_pretrained(fp16_dir)
             self.tokenizer.save_pretrained(fp16_dir)
             
-            logger.info(f"✓ Merged FP16 saved to {fp16_dir}")
+            logger.info(f"Merged FP16 saved to {fp16_dir}")
             results["formats"]["merged_fp16"] = fp16_dir
             
             del model
@@ -1247,7 +1239,7 @@ class CompressTrainer:
         
         # Format 2: Quantized 4-bit
         if self.deployment_config.save_quantized_4bit:
-            logger.info("\n📦 Deploying: Quantized 4-bit")
+            logger.info("\nDeploying: Quantized 4-bit")
             quant4_dir = os.path.join(deploy_dir, "quantized_4bit")
             os.makedirs(quant4_dir, exist_ok=True)
             
@@ -1259,7 +1251,7 @@ class CompressTrainer:
             model.save_pretrained(quant4_dir)
             self.tokenizer.save_pretrained(quant4_dir)
             
-            logger.info(f"✓ Quantized 4-bit saved to {quant4_dir}")
+            logger.info(f"Quantized 4-bit saved to {quant4_dir}")
             results["formats"]["quantized_4bit"] = quant4_dir
             
             del model
@@ -1267,7 +1259,7 @@ class CompressTrainer:
         
         # Format 3: Quantized 8-bit
         if self.deployment_config.save_quantized_8bit:
-            logger.info("\n📦 Deploying: Quantized 8-bit")
+            logger.info("\nDeploying: Quantized 8-bit")
             quant8_dir = os.path.join(deploy_dir, "quantized_8bit")
             os.makedirs(quant8_dir, exist_ok=True)
             
@@ -1279,7 +1271,7 @@ class CompressTrainer:
             model.save_pretrained(quant8_dir)
             self.tokenizer.save_pretrained(quant8_dir)
             
-            logger.info(f"✓ Quantized 8-bit saved to {quant8_dir}")
+            logger.info(f"Quantized 8-bit saved to {quant8_dir}")
             results["formats"]["quantized_8bit"] = quant8_dir
             
             del model
@@ -1288,7 +1280,7 @@ class CompressTrainer:
         # Format 4: GGUF formats
         gguf_formats = self.deployment_config.get_gguf_formats()
         if gguf_formats:
-            logger.info(f"\n📦 Deploying: GGUF formats {gguf_formats}")
+            logger.info(f"\nDeploying: GGUF formats {gguf_formats}")
             
             try:
                 # Convert to GGUF using llama.cpp tools
@@ -1301,13 +1293,13 @@ class CompressTrainer:
                 for fmt in gguf_formats:
                     gguf_path = os.path.join(deploy_dir, "gguf", f"model-{fmt}.gguf")
                     results["formats"][f"gguf_{fmt}"] = gguf_path
-                    logger.info(f"✓ GGUF {fmt} saved to {gguf_path}")
+                    logger.info(f"GGUF {fmt} saved to {gguf_path}")
                     
             except Exception as e:
-                logger.error(f"❌ GGUF conversion failed: {e}")
+                logger.error(f"GGUF conversion failed: {e}")
                 results["gguf_error"] = str(e)
         
-        logger.info(f"\n✅ Deploy stage complete!")
+        logger.info(f"\nDeploy stage complete!")
         logger.info(f"   Output directory: {deploy_dir}")
         logger.info(f"   Formats generated: {list(results['formats'].keys())}")
         
