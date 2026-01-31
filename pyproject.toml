@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "compressgpt-core"
-version = "0.1.0"
+version = "0.1.2"
 description = "LLM Compression and Optimization Library - Build the smallest runnable models that preserve target accuracy"
 readme = "README.md"
 license = {text = "MIT"}
