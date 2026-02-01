@@ -103,10 +103,11 @@ class TestDatasetBuilderInit:
         assert builder.input_column_map == input_column_map
         assert builder.label_column == "labeled_result"
         assert builder.valid_labels is None
+        # response_trigger is stripped for consistent matching
         assert builder.response_trigger == "Answer:"
     
     def test_response_trigger_extraction(self, sample_csv_path, prompt_template, input_column_map, mock_tokenizer):
-        """Test that response trigger is correctly extracted."""
+        """Test that response trigger is correctly extracted and stripped."""
         builder = DatasetBuilder(
             data_path=sample_csv_path,
             model_id="mock-model",
@@ -116,6 +117,7 @@ class TestDatasetBuilderInit:
             tokenizer=mock_tokenizer
         )
         
+        # response_trigger is stripped for consistent matching
         assert builder.response_trigger == "Answer:"
     
     def test_response_trigger_multiword(self, sample_csv_path, input_column_map, mock_tokenizer):
@@ -130,6 +132,7 @@ class TestDatasetBuilderInit:
             tokenizer=mock_tokenizer
         )
         
+        # response_trigger is stripped for consistent matching
         assert builder.response_trigger == "Your Answer is:"
     
     def test_model_mode_detection_base(self, sample_csv_path, prompt_template, input_column_map, mock_tokenizer):
@@ -317,6 +320,7 @@ class TestDatasetBuilderBuild:
         assert "label_space" in metadata
         assert "label_counts" in metadata
         assert metadata["model_id"] == "mock-model"
+        # response_trigger is stripped for consistent matching
         assert metadata["response_trigger"] == "Answer:"
     
     def test_build_correct_row_count(self, sample_csv_path, prompt_template, input_column_map, mock_tokenizer):

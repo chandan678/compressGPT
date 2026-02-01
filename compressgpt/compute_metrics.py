@@ -2,22 +2,6 @@
 This module provides the ComputeMetrics class with label-restricted argmax
 for computing accuracy metrics on model predictions.
 
-Example usage:
-    from compressgpt import DatasetBuilder, ComputeMetrics
-    
-    builder = DatasetBuilder(...)
-    builder.build()
-    
-    # Create metrics with label restriction
-    metrics = ComputeMetrics(
-        labels=builder.label_space.labels,
-        valid_token_ids=builder.label_space.valid_token_ids,
-        id_to_label=builder.label_space.id_to_label,
-        tokenizer=tokenizer
-    )
-    
-    # Use as trainer callback
-    trainer = SFTTrainer(..., compute_metrics=metrics.as_trainer_callback())
 """
 
 from typing import Optional, List, Dict
@@ -34,10 +18,11 @@ class ComputeMetrics:
     preventing vocabulary leakage and special token predictions.
     
     Attributes:
+        metadata: Dataset metadata from DatasetBuilder.get_metadata()
+        tokenizer: Tokenizer for decoding predictions (optional, for logging)
         labels: List of label strings
-        valid_token_ids: List of valid label token IDs (for logits indexing)
+        label_token_ids: Dict mapping label string to token ID
         id_to_label: Dict mapping token ID to label string
-        tokenizer: Tokenizer for decoding (optional)
     """
     
     def __init__(
@@ -308,9 +293,7 @@ class ComputeMetrics:
                 l_row = labels[i]
                 
                 # Find first non-masked position (where label != -100)
-                # CRITICAL: This extracts the FIRST token after the response trigger,
-                # not "the" from "the answer is yes". The DataCollatorForCompletionOnlyLM
-                # masks everything before response_trigger, so first unmasked token IS the label.
+                # This is the position where the LABEL token appears in the sequence.
                 idxs = np.where(l_row != -100)[0]
                 if idxs.size == 0:
                     continue
@@ -323,8 +306,23 @@ class ComputeMetrics:
                     unknown_gold_count += 1
                     continue
                 
-                # Extract logits at the answer position: [V] or [num_labels]
-                step_logits = logits[i, pos, :]
+                # CRITICAL FIX: In causal LM, logits[i] predicts token[i+1], NOT token[i]
+                # So to get the prediction for the token at position `pos`, we need logits[pos-1]
+                # This is because the model sees context[0:pos] and predicts what comes next.
+                #
+                # Example:
+                #   Position:  18    19    20      21
+                #   Token:    'Int' 'ent' ':' 'playlist' 
+                #   Labels:   -100  -100  -100   27889
+                #
+                # To predict token at position 20 ('playlist'), we look at logits[19].
+                # logits[19] = P(token | context[0:20]) = P(token | "...Intent:")
+                logit_pos = pos - 1
+                if logit_pos < 0:
+                    # Edge case: label at position 0 (shouldn't happen with proper prompts)
+                    continue
+                
+                step_logits = logits[i, logit_pos, :]
                 
                 # Check if logits are already filtered (from preprocess_logits_for_metrics)
                 if step_logits.shape[0] == len(valid_token_ids):

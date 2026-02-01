@@ -177,7 +177,11 @@ class CompressTrainer:
         if not self.response_trigger:
             raise ValueError("Metadata missing 'response_trigger' field")
         
+        # Extract model_mode (base or instruct)
+        self.model_mode = self.metadata.get("model_mode", "base")
+        
         logger.info(f"Response trigger: {self.response_trigger!r}")
+        logger.info(f"Model mode: {self.model_mode}")
         logger.info(f"LabelSpace: {len(self.label_space.labels)} labels")
         logger.info(f"  {self.label_space.labels}")
         
@@ -460,7 +464,8 @@ class CompressTrainer:
         # Setup data collator
         data_collator = setup_data_collator(
             self.tokenizer,
-            self.response_trigger
+            self.response_trigger,
+            model_mode=self.model_mode
         )
         
         # Setup metrics
@@ -689,7 +694,11 @@ class CompressTrainer:
         )
         
         # Setup data collator
-        data_collator = setup_data_collator(self.tokenizer, self.response_trigger)
+        data_collator = setup_data_collator(
+            self.tokenizer, 
+            self.response_trigger,
+            model_mode=self.model_mode
+        )
         
         # Setup training args
         run_name = self.training_config.run_name or "compressgpt_ft"
@@ -981,7 +990,11 @@ class CompressTrainer:
         model = get_peft_model(base_model, peft_config)
         
         # Setup data collator
-        data_collator = setup_data_collator(self.tokenizer, self.response_trigger)
+        data_collator = setup_data_collator(
+            self.tokenizer, 
+            self.response_trigger,
+            model_mode=self.model_mode
+        )
         
         # Use full training epochs (same as FT) to recover accuracy
         run_name = self.training_config.run_name or "compressgpt_recovery"

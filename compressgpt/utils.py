@@ -95,19 +95,81 @@ def validate_response_template(template: str, allow_special_tokens: bool = False
                 )
 
 
-def setup_data_collator(tokenizer, response_template: str, *, allow_fallback: bool = False):
+def setup_data_collator(
+    tokenizer, 
+    response_template: str, 
+    *, 
+    model_mode: str = "base",
+    allow_fallback: bool = False
+):
     """
     Create a completion-only collator that masks prompt tokens so loss is computed
     only on response tokens (classification label tokens in your case).
+    
+    CRITICAL: For instruct models with chat templates, we use the assistant header
+    as the response template instead of the user-provided trigger. This is because
+    tokenization is context-sensitive: "Answer:" tokenizes differently when preceded
+    by a space vs. standalone. The assistant header is always tokenized consistently.
+    
+    Args:
+        tokenizer: The tokenizer
+        response_template: The response trigger (e.g., "Answer:") - used for base models
+        model_mode: "base" or "instruct" - determines which template to use
+        allow_fallback: If True, fall back to full-sequence loss if trl not available
+    
+    Returns:
+        DataCollator for completion-only loss
     """
-    response_template = response_template.strip()
-
     try:
         from trl import DataCollatorForCompletionOnlyLM
-        return DataCollatorForCompletionOnlyLM(
-            tokenizer=tokenizer,
-            response_template=response_template,
-        )
+        
+        if model_mode == "instruct":
+            # For instruct models, use the assistant header as response template
+            # This is more reliable than user triggers due to context-sensitive tokenization
+            #
+            # Common assistant headers:
+            # - Llama 3: <|start_header_id|>assistant<|end_header_id|>\n\n
+            # - Mistral/ChatML: <|im_start|>assistant\n
+            # - Llama 2: [/INST]
+            
+            # Try to detect the assistant header from the tokenizer's chat template
+            assistant_header = None
+            
+            # Check for Llama 3 style
+            if hasattr(tokenizer, 'chat_template') and tokenizer.chat_template:
+                if '<|start_header_id|>' in tokenizer.chat_template:
+                    assistant_header = "<|start_header_id|>assistant<|end_header_id|>\n\n"
+                elif '<|im_start|>' in tokenizer.chat_template:
+                    assistant_header = "<|im_start|>assistant\n"
+                elif '[/INST]' in tokenizer.chat_template:
+                    assistant_header = "[/INST]"
+            
+            if assistant_header:
+                # Use assistant header for reliable masking
+                return DataCollatorForCompletionOnlyLM(
+                    tokenizer=tokenizer,
+                    response_template=assistant_header,
+                )
+            else:
+                # Fallback: try stripped response_template
+                import warnings
+                warnings.warn(
+                    f"Could not detect assistant header for instruct model. "
+                    f"Falling back to '{response_template.strip()}'. "
+                    f"This may cause masking issues due to context-sensitive tokenization."
+                )
+                return DataCollatorForCompletionOnlyLM(
+                    tokenizer=tokenizer,
+                    response_template=response_template.strip(),
+                )
+        else:
+            # Base model: use the response template directly
+            response_template = response_template.strip()
+            return DataCollatorForCompletionOnlyLM(
+                tokenizer=tokenizer,
+                response_template=response_template,
+            )
+            
     except ImportError as e:
         if not allow_fallback:
             raise ImportError(
