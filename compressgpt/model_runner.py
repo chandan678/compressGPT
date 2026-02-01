@@ -279,8 +279,27 @@ class ModelRunner:
         gold_labels = []
         sample_logs = []
         
-        prompts = dataset["prompt"]
-        responses = dataset["response"]
+        # Support both column naming conventions:
+        # - DatasetBuilder creates: 'text' (full), 'gold_label', optionally 'prompt'/'response' with keep_fields=True
+        # - Legacy format: 'prompt', 'response'
+        # Also support dict-like objects for testing
+        column_names = getattr(dataset, 'column_names', list(dataset.keys()) if isinstance(dataset, dict) else [])
+        
+        if "prompt" in column_names:
+            prompts = dataset["prompt"]
+        elif "text" in column_names:
+            # Extract prompt from 'text' by removing the label part
+            # For eval (is_train=False), 'text' is prompt-only
+            prompts = dataset["text"]
+        else:
+            raise ValueError("Dataset must have 'prompt' or 'text' column")
+        
+        if "response" in column_names:
+            responses = dataset["response"]
+        elif "gold_label" in column_names:
+            responses = dataset["gold_label"]
+        else:
+            raise ValueError("Dataset must have 'response' or 'gold_label' column")
         
         iterator = range(0, len(prompts), self.batch_size)
         if show_progress:
@@ -306,7 +325,7 @@ class ModelRunner:
                 raw_pred_token_ids = next_token_logits.argmax(dim=-1).cpu().tolist()
                 
                 # Process each prediction
-                for raw_token_id, response in zip(raw_pred_token_ids, batch_responses):
+                for idx, (raw_token_id, response, prompt) in enumerate(zip(raw_pred_token_ids, batch_responses, batch_prompts)):
                     # Clean and map prediction to token ID
                     mapped_token_id, raw_decoded, cleaned_label = self._clean_and_map_to_token_id(raw_token_id)
                     predictions.append(mapped_token_id)
@@ -323,6 +342,8 @@ class ModelRunner:
                     # Collect samples for logging
                     if log_samples > 0 and len(sample_logs) < log_samples:
                         sample_logs.append({
+                            "prompt": prompt,
+                            "raw_token_id": raw_token_id,
                             "raw_decoded": raw_decoded,
                             "cleaned_label": cleaned_label,
                             "pred_token_id": mapped_token_id,
@@ -338,12 +359,34 @@ class ModelRunner:
         return predictions, gold_labels
     
     def _log_samples(self, samples: list[dict]):
-        """Log sample predictions for debugging."""
-        print(f"\n📋 Sample predictions (first {len(samples)}):")
+        """Log sample predictions for detailed debugging."""
+        print(f"\n{'='*80}")
+        print(f"📋 Sample Predictions (first {len(samples)})")
+        print(f"{'='*80}")
+        
+        # Show label space info first
+        print(f"\n📊 Label Space:")
+        print(f"  Labels: {self.labels}")
+        print(f"  Token IDs: {self.label_token_ids}")
+        
         for i, s in enumerate(samples):
-            match = "✓" if s["match"] else "✗"
+            match = "✓ CORRECT" if s["match"] else "✗ WRONG"
             cleaned = s["cleaned_label"] if s["cleaned_label"] else "UNKNOWN"
-            print(f"  {i+1}. raw='{s['raw_decoded'].strip()}' -> cleaned='{cleaned}' | gold='{s['gold_label']}' {match}")
+            
+            print(f"\n{'─'*60}")
+            print(f"Sample {i+1}: {match}")
+            print(f"{'─'*60}")
+            
+            # Truncate prompt for display
+            prompt = s.get("prompt", "N/A")
+            if len(prompt) > 200:
+                prompt = prompt[:200] + "..."
+            print(f"Prompt: {prompt}")
+            
+            print(f"\nGold:  '{s['gold_label']}' (token_id={s['gold_token_id']})")
+            print(f"Pred:  raw_token_id={s['raw_token_id']} -> decoded='{s['raw_decoded']}' -> cleaned='{cleaned}' (mapped_id={s['pred_token_id']})")
+        
+        print(f"\n{'='*80}\n")
         print()
     
     def run_single(self, prompt: str) -> tuple[int, str]:
