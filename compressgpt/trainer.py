@@ -485,8 +485,10 @@ class CompressTrainer:
             weight_decay=self.compress_training_config.weight_decay,
             max_length=self.compress_training_config.max_seq_length,
             logging_steps=self.compress_training_config.logging_steps,
-            eval_strategy=self.compress_training_config.eval_strategy,
-            save_strategy=self.compress_training_config.save_strategy,
+            eval_strategy="steps",  # Eval during training for progress visibility
+            eval_steps=self.compress_training_config.eval_steps or 500,  # Default 500 steps if not specified
+            save_strategy="steps",  # Must match eval_strategy when load_best_model_at_end=True
+            save_steps=self.compress_training_config.save_steps or 500,  # Default 500 steps if not specified
             save_total_limit=self.compress_training_config.save_total_limit,
             load_best_model_at_end=self.compress_training_config.load_best_model_at_end,
             metric_for_best_model=self.compress_training_config.metric_for_best_model,
@@ -499,28 +501,49 @@ class CompressTrainer:
             eval_accumulation_steps=self.compress_training_config.eval_accumulation_steps,
         )
         
+        # Setup callbacks
+        callbacks = []
+        if self.compress_training_config.early_stopping_patience > 0:
+            callbacks.append(EarlyStoppingCallback(
+                early_stopping_patience=self.compress_training_config.early_stopping_patience,
+                early_stopping_threshold=self.compress_training_config.early_stopping_threshold,
+            ))
+        
         # Train recovery adapter
         trainer = SFTTrainer(
             model=model,
             args=training_args,
             train_dataset=self.train_dataset,
             eval_dataset=self.eval_dataset,
+            processing_class=self.tokenizer,  # Required for proper tokenization
             data_collator=data_collator,
             compute_metrics=compute_metrics_fn,
             preprocess_logits_for_metrics=self.metrics_computer.get_preprocess_logits(),
-            callbacks=([EarlyStoppingCallback(
-                early_stopping_patience=self.compress_training_config.early_stopping_patience,
-                early_stopping_threshold=self.compress_training_config.early_stopping_threshold,
-            )] if self.compress_training_config.early_stopping_patience > 0 else []),
+            callbacks=callbacks,
         )
         
+        # Train
+        import time
+        num_samples = len(self.train_dataset)
+        eff_bs = self.compress_training_config.per_device_train_batch_size * self.compress_training_config.gradient_accumulation_steps
+        logger.info(f"Training: {num_samples} samples, {self.compress_training_config.num_train_epochs} epochs, batch_size={eff_bs}")
+        
         logger.info("🚀 Starting recovery training...")
+        start_time = time.time()
         trainer.train()
+        duration = time.time() - start_time
+        logger.info(f"Recovery training completed in {duration/60:.1f} minutes")
         
         # Evaluate
         logger.info("📊 Evaluating recovery adapter...")
         metrics = trainer.evaluate()
-        logger.info(format_metrics_table(metrics, f"Compress {bits}-bit Recovery"))
+        
+        # Clear memory after eval
+        if self.device_type in ["mps", "cuda"]:
+            clear_gpu_memory()
+        
+        # Print metrics (use print for visibility, same as FT stage)
+        print(format_metrics_table(metrics, f"Compress {bits}-bit Recovery"))
         
         # Save recovery adapter
         trainer.model.save_pretrained(recovery_dir)
