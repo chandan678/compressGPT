@@ -22,7 +22,7 @@ def __getattr__(name):
         return getattr(cfg, name)
     raise AttributeError(f"module 'compressgpt' has no attribute '{name}'")
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "DatasetBuilder",
     "ComputeMetrics",

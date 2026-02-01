@@ -184,304 +184,136 @@ class TestFormatMetricsTable:
         assert "completed" in result
 
 
-class TestComputeMetricsIntegration:
-    """Tests for ComputeMetrics class integration."""
-    
-    def test_compute_metrics_initialization(self):
-        """Test that ComputeMetrics can be initialized with new API."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        
-        tokenizer = Mock()
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
-        
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
-        )
-        
-        assert metrics.labels == labels
-        assert len(metrics.valid_token_ids) == 2
-        assert metrics.id_to_label == id_to_label
-    
-    def test_label_restricted_argmax_behavior(self):
-        """Test that predictions are restricted to valid label tokens."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        
-        tokenizer = Mock()
-        tokenizer.decode = Mock(side_effect=lambda ids: f"token_{ids[0]}")
-        
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
-        
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
-        )
-        
-        # Create mock eval_preds
-        # logits: [batch_size, seq_len, vocab_size]
-        # Make token 999 have highest logit, but it's not in valid set
-        logits = np.zeros((2, 5, 1000))
-        logits[0, 0, 999] = 10.0  # Highest overall
-        logits[0, 0, 100] = 5.0   # yes token (valid)
-        logits[0, 0, 200] = 3.0   # no token (valid)
-        
-        # Labels: [batch_size, seq_len], -100 for masked positions
-        labels = np.array([
-            [100, -100, -100, -100, -100],  # First non-masked is gold=yes
-            [200, -100, -100, -100, -100]   # First non-masked is gold=no
-        ])
-        
-        callback = metrics.as_trainer_callback(log_first_n=0)
-        result = callback((logits, labels))
-        
-        # Should achieve 100% accuracy because gold matches and restricted argmax works
-        assert "accuracy" in result
-        assert result["accuracy"] >= 0.0  # At least no error
+# Note: ComputeMetrics tests have been moved to test_compute_metrics.py
+# See test_compute_metrics.py for comprehensive tests including:
+# - TestComputeMetricsInit
+# - TestInputTypeDetection  
+# - TestLabelsToTokenIds
+# - TestCompute
+# - TestAsTrainerCallback
+# - TestGetPreprocessLogits
+# - TestConfusionMatrix
+# - TestPrintReport
 
 
-class TestPreprocessLogitsForMetrics:
-    """Tests for preprocess_logits_for_metrics functionality."""
+class TestSetupDataCollatorModelMode:
+    """Tests for setup_data_collator model_mode functionality.
     
-    def test_get_preprocess_logits_returns_callable(self):
-        """Test that get_preprocess_logits returns a callable function."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        
+    This tests the fix for context-sensitive tokenization issues where
+    "Answer:" tokenizes differently standalone vs. after a space.
+    For instruct models, we now use the assistant header instead.
+    """
+    
+    @patch('trl.DataCollatorForCompletionOnlyLM')
+    def test_base_model_uses_response_template(self, mock_collator_class):
+        """Test that base model mode uses the provided response template."""
         tokenizer = Mock()
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
+        tokenizer.chat_template = None
+        tokenizer.pad_token_id = 0
         
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
+        setup_data_collator(
+            tokenizer, 
+            "Answer:",
+            model_mode="base"
         )
         
-        preprocess_fn = metrics.get_preprocess_logits()
-        assert callable(preprocess_fn)
+        # For base models, response_template should be used directly
+        mock_collator_class.assert_called_once()
+        call_kwargs = mock_collator_class.call_args[1]
+        assert call_kwargs['response_template'] == "Answer:"
     
-    def test_preprocess_filters_logits_correctly(self):
-        """Test that preprocessing filters logits to only label tokens."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        import torch
-        
+    @patch('trl.DataCollatorForCompletionOnlyLM')
+    def test_instruct_model_detects_llama3_header(self, mock_collator_class):
+        """Test that instruct model detects Llama 3 assistant header."""
         tokenizer = Mock()
-        labels = ["yes", "no", "partial"]
-        valid_token_ids = np.array([100, 200, 300])
-        id_to_label = {100: "yes", 200: "no", 300: "partial"}
+        tokenizer.chat_template = "{% if messages[0]['role'] == 'system' %}<|start_header_id|>system<|end_header_id|>"
+        tokenizer.pad_token_id = 0
         
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
+        setup_data_collator(
+            tokenizer, 
+            "Answer:",  # This should be ignored for instruct
+            model_mode="instruct"
         )
         
-        preprocess_fn = metrics.get_preprocess_logits()
-        
-        # Create logits: [batch_size, seq_len, vocab_size]
-        batch_size, seq_len, vocab_size = 2, 4, 50000
-        logits = torch.randn(batch_size, seq_len, vocab_size)
-        labels_tensor = torch.zeros(batch_size, seq_len)
-        
-        # Filter logits
-        filtered_logits = preprocess_fn(logits, labels_tensor)
-        
-        # Should reduce from vocab_size to num_labels
-        assert filtered_logits.shape == (batch_size, seq_len, len(valid_token_ids))
-        assert filtered_logits.shape[2] == 3  # yes, no, partial
+        # For Llama 3 instruct, should use assistant header
+        mock_collator_class.assert_called_once()
+        call_kwargs = mock_collator_class.call_args[1]
+        assert "<|start_header_id|>assistant<|end_header_id|>" in call_kwargs['response_template']
     
-    def test_preprocess_handles_tuple_logits(self):
-        """Test that preprocessing handles logits wrapped in tuple."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        import torch
-        
+    @patch('trl.DataCollatorForCompletionOnlyLM')
+    def test_instruct_model_detects_chatml_header(self, mock_collator_class):
+        """Test that instruct model detects ChatML assistant header."""
         tokenizer = Mock()
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
+        tokenizer.chat_template = "<|im_start|>user\n{content}<|im_end|>"
+        tokenizer.pad_token_id = 0
         
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
+        setup_data_collator(
+            tokenizer, 
+            "Answer:",
+            model_mode="instruct"
         )
         
-        preprocess_fn = metrics.get_preprocess_logits()
-        
-        # Create logits wrapped in tuple (some models do this)
-        batch_size, seq_len, vocab_size = 2, 4, 50000
-        logits = torch.randn(batch_size, seq_len, vocab_size)
-        logits_tuple = (logits,)
-        labels_tensor = torch.zeros(batch_size, seq_len)
-        
-        # Should handle tuple correctly
-        filtered_logits = preprocess_fn(logits_tuple, labels_tensor)
-        
-        assert filtered_logits.shape == (batch_size, seq_len, 2)
+        mock_collator_class.assert_called_once()
+        call_kwargs = mock_collator_class.call_args[1]
+        assert "<|im_start|>assistant" in call_kwargs['response_template']
     
-    def test_preprocess_handles_list_logits(self):
-        """Test that preprocessing handles logits wrapped in list."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        import torch
-        
+    @patch('trl.DataCollatorForCompletionOnlyLM')
+    def test_instruct_model_detects_llama2_header(self, mock_collator_class):
+        """Test that instruct model detects Llama 2 [INST] header."""
         tokenizer = Mock()
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
+        tokenizer.chat_template = "[INST] {content} [/INST]"
+        tokenizer.pad_token_id = 0
         
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
+        setup_data_collator(
+            tokenizer, 
+            "Answer:",
+            model_mode="instruct"
         )
         
-        preprocess_fn = metrics.get_preprocess_logits()
-        
-        # Create logits wrapped in list
-        batch_size, seq_len, vocab_size = 2, 4, 50000
-        logits = torch.randn(batch_size, seq_len, vocab_size)
-        logits_list = [logits]
-        labels_tensor = torch.zeros(batch_size, seq_len)
-        
-        # Should handle list correctly
-        filtered_logits = preprocess_fn(logits_list, labels_tensor)
-        
-        assert filtered_logits.shape == (batch_size, seq_len, 2)
+        mock_collator_class.assert_called_once()
+        call_kwargs = mock_collator_class.call_args[1]
+        assert "[/INST]" in call_kwargs['response_template']
     
-    def test_preprocess_device_safe(self):
-        """Test that preprocessing works on different devices."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        import torch
+    @patch('trl.DataCollatorForCompletionOnlyLM')
+    def test_instruct_model_fallback_when_no_known_header(self, mock_collator_class):
+        """Test that instruct model falls back when no known header detected."""
+        import warnings
         
         tokenizer = Mock()
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
+        tokenizer.chat_template = "some_unknown_template"
+        tokenizer.pad_token_id = 0
         
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
-        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            setup_data_collator(
+                tokenizer, 
+                "Answer:",
+                model_mode="instruct"
+            )
+            
+            # Should warn about fallback
+            assert len(w) >= 1
+            assert "Could not detect assistant header" in str(w[0].message)
         
-        preprocess_fn = metrics.get_preprocess_logits()
-        
-        # Test CPU device
-        batch_size, seq_len, vocab_size = 2, 4, 1000
-        logits_cpu = torch.randn(batch_size, seq_len, vocab_size, device='cpu')
-        labels_tensor = torch.zeros(batch_size, seq_len)
-        
-        filtered_cpu = preprocess_fn(logits_cpu, labels_tensor)
-        assert filtered_cpu.device.type == 'cpu'
-        assert filtered_cpu.shape[2] == 2
-        
-        # Test CUDA if available
-        if torch.cuda.is_available():
-            logits_cuda = torch.randn(batch_size, seq_len, vocab_size, device='cuda')
-            filtered_cuda = preprocess_fn(logits_cuda, labels_tensor)
-            assert filtered_cuda.device.type == 'cuda'
-            assert filtered_cuda.shape[2] == 2
+        # Falls back to stripped response template
+        mock_collator_class.assert_called_once()
+        call_kwargs = mock_collator_class.call_args[1]
+        assert call_kwargs['response_template'] == "Answer:"
     
-    def test_compute_metrics_with_preprocessed_logits(self):
-        """Test that compute_metrics correctly handles preprocessed logits."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        
+    @patch('trl.DataCollatorForCompletionOnlyLM')
+    def test_default_model_mode_is_base(self, mock_collator_class):
+        """Test that default model_mode is 'base'."""
         tokenizer = Mock()
-        tokenizer.decode = Mock(side_effect=lambda ids: f"token_{ids[0]}")
+        tokenizer.chat_template = "<|start_header_id|>assistant"  # Has instruct markers
+        tokenizer.pad_token_id = 0
         
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
+        # Default (no model_mode specified) should use base behavior
+        setup_data_collator(tokenizer, "Answer:")
         
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
-        )
-        
-        # Create preprocessed logits (already filtered to label tokens)
-        # Shape: [batch_size, seq_len, num_labels]
-        preprocessed_logits = np.zeros((2, 5, 2))
-        # First sample: yes token (idx 0) has higher score
-        preprocessed_logits[0, 0, 0] = 5.0  # yes
-        preprocessed_logits[0, 0, 1] = 3.0  # no
-        # Second sample: no token (idx 1) has higher score
-        preprocessed_logits[1, 0, 0] = 3.0  # yes
-        preprocessed_logits[1, 0, 1] = 5.0  # no
-        
-        # Labels: first non-masked position has the gold label
-        labels_array = np.array([
-            [100, -100, -100, -100, -100],  # gold=yes
-            [200, -100, -100, -100, -100]   # gold=no
-        ])
-        
-        callback = metrics.as_trainer_callback(log_first_n=0)
-        result = callback((preprocessed_logits, labels_array))
-        
-        # Should correctly map indices back to token IDs
-        assert "accuracy" in result
-        assert result["accuracy"] == 1.0  # Both predictions correct
-    
-    def test_memory_reduction_benefit(self):
-        """Test that preprocessing significantly reduces memory footprint."""
-        from compressgpt.compute_metrics import ComputeMetrics
-        import numpy as np
-        import torch
-        
-        tokenizer = Mock()
-        labels = ["yes", "no"]
-        valid_token_ids = np.array([100, 200])
-        id_to_label = {100: "yes", 200: "no"}
-        
-        metrics = ComputeMetrics(
-            labels=labels,
-            valid_token_ids=valid_token_ids,
-            id_to_label=id_to_label,
-            tokenizer=tokenizer
-        )
-        
-        preprocess_fn = metrics.get_preprocess_logits()
-        
-        # Simulate realistic dimensions
-        batch_size, seq_len, vocab_size = 4, 256, 128000
-        
-        # Calculate memory for full vocab logits
-        full_logits = torch.randn(batch_size, seq_len, vocab_size)
-        full_size_bytes = full_logits.element_size() * full_logits.nelement()
-        
-        # Filter to label tokens
-        labels_tensor = torch.zeros(batch_size, seq_len)
-        filtered_logits = preprocess_fn(full_logits, labels_tensor)
-        filtered_size_bytes = filtered_logits.element_size() * filtered_logits.nelement()
-        
-        # Calculate reduction ratio
-        reduction_ratio = full_size_bytes / filtered_size_bytes
-        
-        # Should see massive reduction (128000 / 2 = 64000x)
-        assert reduction_ratio > 10000  # At least 10,000x reduction
-        assert filtered_logits.shape == (batch_size, seq_len, 2)
+        # Should use provided template, not detect assistant header
+        mock_collator_class.assert_called_once()
+        call_kwargs = mock_collator_class.call_args[1]
+        assert call_kwargs['response_template'] == "Answer:"
 
 
 class TestLoadMetricsRemoved:

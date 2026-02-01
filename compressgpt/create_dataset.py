@@ -141,6 +141,12 @@ class DatasetBuilder:
         self.model_mode = self._detect_model_mode() if model_mode == "auto" else model_mode
         logger.info(f"Model mode: {self.model_mode}")
         
+        # For instruct models, disable tokenizer's automatic BOS since chat template adds it
+        # This prevents double <|begin_of_text|> tokens
+        if self.model_mode == "instruct" and hasattr(self.tokenizer, 'add_bos_token'):
+            self.tokenizer.add_bos_token = False
+            logger.info(f"Disabled tokenizer add_bos_token (chat template handles BOS)")
+        
         # Extract placeholders from template
         self._template_placeholders = set(re.findall(r'\{(\w+)\}', prompt_template))
         
@@ -196,7 +202,7 @@ class DatasetBuilder:
         # Only strip trailing whitespace, preserve leading space for tokenization consistency
         response_trigger = self.prompt_template[last_placeholder_end:].strip()
         
-        if not response_trigger:
+        if not response_trigger or not response_trigger.strip():
             raise ValueError(
                 "No response trigger found after last placeholder. "
                 "Prompt should end with a trigger like 'Answer:' after the last {placeholder}"
