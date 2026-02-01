@@ -310,7 +310,12 @@ class ModelRunner:
                 batch_prompts = prompts[i:i + self.batch_size]
                 batch_responses = responses[i:i + self.batch_size]
                 
-                # Tokenize prompts
+                # Tokenize prompts with LEFT padding for correct next-token prediction
+                # Right padding would make logits[:, -1, :] look at pad tokens
+                original_padding_side = getattr(self.tokenizer, 'padding_side', 'right')
+                if hasattr(self.tokenizer, 'padding_side'):
+                    self.tokenizer.padding_side = "left"
+                
                 inputs = self.tokenizer(
                     batch_prompts,
                     return_tensors="pt",
@@ -318,9 +323,14 @@ class ModelRunner:
                     truncation=True,
                 ).to(self.device)
                 
-                # Get model predictions (first token mode)
+                # Restore original padding side
+                if hasattr(self.tokenizer, 'padding_side'):
+                    self.tokenizer.padding_side = original_padding_side
+                
+                # Get model predictions (next token after prompt)
                 outputs = self.model(**inputs)
                 logits = outputs.logits
+                # With left padding, the last position is always the actual last token
                 next_token_logits = logits[:, -1, :]
                 raw_pred_token_ids = next_token_logits.argmax(dim=-1).cpu().tolist()
                 
@@ -454,3 +464,117 @@ class ModelRunner:
                 label_logits[label] = next_token_logits[token_id].item()
         
         return label_logits
+
+    def run_detailed(
+        self,
+        dataset,
+        show_progress: bool = True,
+    ) -> list[dict]:
+        """
+        Run inference and return detailed results for each sample.
+        
+        Unlike run(), this returns full information for analysis and CSV export.
+        
+        Args:
+            dataset: HuggingFace Dataset with 'prompt'/'text' and 'response'/'gold_label' columns
+            show_progress: Whether to show progress bar
+            
+        Returns:
+            List of dicts, each containing:
+                - prompt: The input prompt
+                - gold_label: The expected label
+                - pred_label: The predicted label (or "UNKNOWN")
+                - gold_token_id: Token ID of gold label
+                - pred_token_id: Token ID of prediction (-1 if unknown)
+                - raw_decoded: Raw decoded token from model
+                - correct: Boolean indicating if prediction matches gold
+        
+        Example:
+            results = runner.run_detailed(test_builder.dataset)
+            
+            # Save to CSV
+            import pandas as pd
+            df = pd.DataFrame(results)
+            df.to_csv("inference_results.csv", index=False)
+            
+            # Analyze errors
+            errors = [r for r in results if not r["correct"]]
+        """
+        if self.metadata is None:
+            raise ValueError("metadata is required for run_detailed(). Provide metadata during initialization.")
+        
+        self.model.eval()
+        results = []
+        
+        # Get columns
+        column_names = getattr(dataset, 'column_names', list(dataset.keys()) if isinstance(dataset, dict) else [])
+        
+        if "prompt" in column_names:
+            prompts = dataset["prompt"]
+        elif "text" in column_names:
+            prompts = dataset["text"]
+        else:
+            raise ValueError("Dataset must have 'prompt' or 'text' column")
+        
+        if "response" in column_names:
+            responses = dataset["response"]
+        elif "gold_label" in column_names:
+            responses = dataset["gold_label"]
+        else:
+            raise ValueError("Dataset must have 'response' or 'gold_label' column")
+        
+        iterator = range(0, len(prompts), self.batch_size)
+        if show_progress:
+            iterator = tqdm(iterator, desc="Running inference")
+        
+        with torch.no_grad():
+            for i in iterator:
+                batch_prompts = prompts[i:i + self.batch_size]
+                batch_responses = responses[i:i + self.batch_size]
+                
+                # Use left padding for correct next-token prediction
+                original_padding_side = getattr(self.tokenizer, 'padding_side', 'right')
+                if hasattr(self.tokenizer, 'padding_side'):
+                    self.tokenizer.padding_side = "left"
+                
+                inputs = self.tokenizer(
+                    batch_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                ).to(self.device)
+                
+                if hasattr(self.tokenizer, 'padding_side'):
+                    self.tokenizer.padding_side = original_padding_side
+                
+                outputs = self.model(**inputs)
+                logits = outputs.logits
+                next_token_logits = logits[:, -1, :]
+                raw_pred_token_ids = next_token_logits.argmax(dim=-1).cpu().tolist()
+                
+                for raw_token_id, response, prompt in zip(raw_pred_token_ids, batch_responses, batch_prompts):
+                    mapped_token_id, raw_decoded, cleaned_label = self._clean_and_map_to_token_id(raw_token_id)
+                    
+                    gold_token_id = self.label_token_ids.get(response)
+                    if gold_token_id is None:
+                        raise ValueError(
+                            f"Response '{response}' not found in label_token_ids. "
+                            f"Available labels: {list(self.label_token_ids.keys())}"
+                        )
+                    
+                    results.append({
+                        "prompt": prompt,
+                        "gold_label": response,
+                        "pred_label": cleaned_label if cleaned_label else "UNKNOWN",
+                        "gold_token_id": gold_token_id,
+                        "pred_token_id": mapped_token_id,
+                        "raw_decoded": raw_decoded.strip(),
+                        "correct": mapped_token_id == gold_token_id,
+                    })
+        
+        # Print summary
+        correct = sum(1 for r in results if r["correct"])
+        total = len(results)
+        print(f"\n📊 Inference Summary: {correct}/{total} correct ({100*correct/total:.1f}% accuracy)")
+        
+        return results
