@@ -292,79 +292,43 @@ class DeploymentConfig:
     The deploy stage takes a merged FP16 model and converts it to the requested
     deployment format(s). Multiple formats can be enabled simultaneously.
     
+    Supported GGUF Quantizations (bundled, no external tools):
+        - f16/bf16: Full precision GGUF
+        - q8_0: 8-bit quantization (recommended for accuracy/size balance)
+        
+    Note: Advanced quantizations (q4_k, q5_k, etc.) require the external
+    llama-quantize tool. Use save_gguf_f16 and quantize externally if needed.
+    
     Attributes:
         save_merged_fp16: Save unquantized merged model (baseline for comparisons)
-        save_quantized_4bit: Save 4-bit quantized model using bitsandbytes
-        save_quantized_8bit: Save 8-bit quantized model using bitsandbytes
         save_gguf_f16: Save GGUF format with FP16 weights
-        save_gguf_q4_0: Save GGUF format with Q4_0 quantization
-        save_gguf_q4_1: Save GGUF format with Q4_1 quantization
-        save_gguf_q5_0: Save GGUF format with Q5_0 quantization
-        save_gguf_q5_1: Save GGUF format with Q5_1 quantization
-        save_gguf_q8_0: Save GGUF format with Q8_0 quantization
-        quant_config: QuantizationConfig to use for quantized formats (4bit/8bit)
+        save_gguf_bf16: Save GGUF format with BF16 weights
+        save_gguf_q8_0: Save GGUF format with Q8_0 quantization (recommended)
         
     Example:
-        # Deploy as 4-bit quantized + GGUF Q4_0
+        # Deploy as merged FP16 + GGUF Q8_0
         config = DeploymentConfig(
-            save_quantized_4bit=True,
-            save_gguf_q4_0=True,
-            quant_config=QuantizationConfig(bits=4, quant_type="nf4")
+            save_merged_fp16=True,
+            save_gguf_q8_0=True,
         )
         
-        # Deploy all GGUF formats for comparison
+        # Deploy multiple GGUF formats
         config = DeploymentConfig(
             save_gguf_f16=True,
-            save_gguf_q4_0=True,
-            save_gguf_q8_0=True
+            save_gguf_q8_0=True,
         )
     """
     save_merged_fp16: bool = True
-    save_quantized_4bit: bool = False
-    save_quantized_8bit: bool = False
     save_gguf_f16: bool = False
-    save_gguf_q4_0: bool = False
-    save_gguf_q4_1: bool = False
-    save_gguf_q5_0: bool = False
-    save_gguf_q5_1: bool = False
+    save_gguf_bf16: bool = False
     save_gguf_q8_0: bool = False
-    quant_config: Optional[QuantizationConfig] = None
-    
-    def __post_init__(self):
-        """Validate and set defaults."""
-        # Cannot request both 4-bit and 8-bit simultaneously (single quant_config)
-        if self.save_quantized_4bit and self.save_quantized_8bit:
-            raise ValueError(
-                "Cannot enable both save_quantized_4bit and save_quantized_8bit. "
-                "Use separate DeploymentConfig instances or provide explicit quant_config."
-            )
-        
-        # If any quantized format requested but no quant_config, create default
-        needs_quant_config = self.save_quantized_4bit or self.save_quantized_8bit
-        if needs_quant_config and self.quant_config is None:
-            # Default to 4-bit if save_quantized_4bit, else 8-bit
-            bits = 4 if self.save_quantized_4bit else 8
-            quant_type = "nf4" if bits == 4 else "int8"
-            self.quant_config = QuantizationConfig(bits=bits, quant_type=quant_type)
-        
-        # Validate quant_config matches requested formats
-        if self.quant_config is not None:
-            if self.save_quantized_4bit and self.quant_config.bits != 4:
-                raise ValueError("save_quantized_4bit=True but quant_config.bits != 4")
-            if self.save_quantized_8bit and self.quant_config.bits != 8:
-                raise ValueError("save_quantized_8bit=True but quant_config.bits != 8")
     
     def has_any_output(self) -> bool:
         """Check if at least one output format is enabled."""
         return any([
             self.save_merged_fp16,
-            self.save_quantized_4bit,
-            self.save_quantized_8bit,
             self.save_gguf_f16,
-            self.save_gguf_q4_0,
-            self.save_gguf_q4_1,
-            self.save_gguf_q5_0,
-            self.save_gguf_q5_1,
+            self.save_gguf_bf16,
             self.save_gguf_q8_0,
         ])
     
@@ -373,14 +337,8 @@ class DeploymentConfig:
         formats = []
         if self.save_gguf_f16:
             formats.append("f16")
-        if self.save_gguf_q4_0:
-            formats.append("q4_0")
-        if self.save_gguf_q4_1:
-            formats.append("q4_1")
-        if self.save_gguf_q5_0:
-            formats.append("q5_0")
-        if self.save_gguf_q5_1:
-            formats.append("q5_1")
+        if self.save_gguf_bf16:
+            formats.append("bf16")
         if self.save_gguf_q8_0:
             formats.append("q8_0")
         return formats

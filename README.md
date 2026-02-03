@@ -4,7 +4,7 @@
 
 It orchestrates the full lifecycle of Large Language Model (LLM) optimization — from supervised fine-tuning, through post-quantization recovery, to production-ready artifact generation — with a single, composable API.
 
-Unlike rigid training scripts, compressGPT allows developers to define **custom compression workflows** by composing high-level stages such as `ft`, `compress_4bit`, and `deploy`. Whether you need a high-accuracy FP16 model for server inference or a highly compressed GGUF model for CPU-only deployment, compressGPT automates tokenization, adapter training, memory-efficient evaluation, and artifact generation to deliver the **smallest runnable model that preserves task-level accuracy**.
+Unlike rigid training scripts, compressGPT allows developers to define **custom compression workflows** by composing high-level stages such as `ft`, `compress_8bit`, and `deploy`. Whether you need a high-accuracy FP16 model for server inference or a compact GGUF Q8_0 model for CPU-only deployment, compressGPT automates tokenization, adapter training, memory-efficient evaluation, and artifact generation to deliver the **smallest runnable model that preserves task-level accuracy**.
 
 ---
 
@@ -48,7 +48,7 @@ builder = DatasetBuilder(
 trainer = CompressTrainer(
     model_id=MODEL_ID,
     dataset_builder=builder,
-    stages=["ft", "compress_4bit", "deploy"],
+    stages=["ft", "compress_8bit", "deploy"],
     training_config=TrainingConfig(
         num_train_epochs=1,
         eval_strategy="epoch",
@@ -56,8 +56,7 @@ trainer = CompressTrainer(
     ),
     deployment_config=DeploymentConfig(
         save_merged_fp16=True,     # Canonical dense model
-        save_quantized_4bit=True,  # BitsAndBytes 4-bit
-        save_gguf_q4_0=True,       # GGUF for llama.cpp
+        save_gguf_q8_0=True,       # GGUF Q8_0 for llama.cpp/Ollama
     ),
 )
 
@@ -70,11 +69,13 @@ print(results)
 ## 📦 Deployment & Artifacts
 
 ### Deployment Methods
-The final stage of the pipeline, **`deploy`**, automatically converts your optimized model into rigorous production formats. Controlled by `DeploymentConfig`, it supports:
+The final stage of the pipeline, **`deploy`**, automatically converts your optimized model into production formats. Controlled by `DeploymentConfig`, it supports:
 
-*   **GGUF (`save_gguf_q4_0`, etc.)**: The gold standard for **CPU inference**. These files can be loaded directly into [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.com).
-*   **Quantized 4-bit (`save_quantized_4bit`)**: Pre-shrunk BitsAndBytes models. Ideal for low-VRAM **GPU inference** using Python/Transformers.
+*   **GGUF Q8_0 (`save_gguf_q8_0`)**: The recommended format for **CPU/GPU inference**. These files can be loaded directly into [llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.com), or [llama-cpp-python](https://github.com/abetlen/llama-cpp-python). Bundled conversion — no external tools required.
+*   **GGUF F16/BF16 (`save_gguf_f16`, `save_gguf_bf16`)**: Higher precision GGUF for maximum accuracy.
 *   **Merged FP16 (`save_merged_fp16`)**: The canonical high-precision model. Use this for **vLLM / TGI servers** or further research.
+
+> **Note:** GGUF conversion uses vendored code from [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT License). Currently supports F32, F16, BF16, and Q8_0 quantization. For other quantization types (Q4_K, Q5_K, etc.), use the external `llama-quantize` tool on the output.
 
 ### Saving Models & Trade-offs
 A unique feature of compressGPT is that **every stage saves its own model and metrics**. This allows you to deploy different versions of the *same model* to different devices based on their constraints.
@@ -82,8 +83,8 @@ A unique feature of compressGPT is that **every stage saves its own model and me
 **1. Default Outputs (`runs/default/`)**
 Every stage you run automatically saves its result:
 *   `ft_adapter/`: High-accuracy LoRA adapter (best for Cloud/GPU).
-*   `compress_4bit_merged/`: Quantized & recovered model (best for accuracy/size balance).
-*   `metrics.json`: Compare `ft` vs `compress_4bit` accuracy to make data-driven deployment decisions.
+*   `compress_8bit_merged/`: Quantized & recovered model (best for accuracy/size balance).
+*   `metrics.json`: Compare `ft` vs `compress_8bit` accuracy to make data-driven deployment decisions.
 
 **2. Deploy Outputs (`runs/default/deploy/`)**
 Production-ready artifacts are generated here **only if enabled** in `DeploymentConfig`:
@@ -91,10 +92,8 @@ Production-ready artifacts are generated here **only if enabled** in `Deployment
 ```text
 runs/default/deploy/
 ├── merged_fp16/        # Universal format (vLLM, TGI)
-├── quantized_4bit/     # Python-native compressed (Transformers)
 └── gguf/
-    ├── model-f16.gguf  # High precision GGUF
-    └── model-q4_0.gguf # Optimized Edge/CPU GGUF
+    └── model-q8_0.gguf # Optimized GGUF for llama.cpp/Ollama
 ```
 
 ---
