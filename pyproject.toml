@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "compressgpt-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "LLM Compression and Optimization Library - Build the smallest runnable models that preserve target accuracy"
 readme = "README.md"
 license = {text = "MIT"}
@@ -48,13 +48,20 @@ dependencies = [
     "trl==0.19.0",
     "accelerate>=0.20.0",
     "bitsandbytes>=0.41.0",
-    "llama-cpp-python>=0.2.0",
+    "pyyaml>=5.1",
+    "requests>=2.25",
+    "protobuf>=4.21.0,<6.0.0",
+    "safetensors>=0.4.0",
+    "sentencepiece>=0.1.98,<0.3.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+]
+gguf-inference = [
+    "llama-cpp-python>=0.2.0",
 ]
 
 [project.urls]

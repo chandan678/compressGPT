@@ -1,0 +1,13 @@
+llama.cpp GGUF vendored code
+=============================
+
+Source: https://github.com/ggml-org/llama.cpp
+Version: gguf-py 0.17.1
+Date vendored: 2026-02-03
+License: MIT
+
+Files included:
+- convert_hf_to_gguf.py (HuggingFace to GGUF converter)
+- gguf/ (GGUF Python library)
+
+To update, copy files from a newer llama.cpp release.

@@ -216,7 +216,7 @@ class TestCompressTrainerConfig:
         custom_ft = LoraConfig(r=32, lora_alpha=64)
         custom_training = TrainingConfig(num_train_epochs=10)
         custom_quant_4bit = QuantizationConfig(bits=4, quant_type="fp4")
-        custom_deploy = DeploymentConfig(save_gguf_q4_0=True)
+        custom_deploy = DeploymentConfig(save_gguf_q8_0=True)
         
         trainer = CompressTrainer(
             model_id="mock-model",
@@ -232,7 +232,7 @@ class TestCompressTrainerConfig:
         assert trainer.ft_config.lora_alpha == 64
         assert trainer.training_config.num_train_epochs == 10
         assert trainer.quant_config_4bit.quant_type == "fp4"
-        assert trainer.deployment_config.save_gguf_q4_0 == True
+        assert trainer.deployment_config.save_gguf_q8_0 == True
 
 
 class TestCompressTrainerDatasetSplit:

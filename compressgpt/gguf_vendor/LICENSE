@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2025 chandan678
+Copyright (c) 2023-2026 The ggml authors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,15 +22,5 @@ SOFTWARE.
 
 ---
 
-## Third-Party Licenses
-
-This software includes vendored code from the following projects:
-
-### llama.cpp / gguf-py
-
-The GGUF conversion functionality (`compressgpt/gguf_vendor/`) is derived from
-the llama.cpp project.
-
+This directory contains vendored code from the llama.cpp project.
 Source: https://github.com/ggml-org/llama.cpp
-License: MIT
-Copyright (c) 2023-2026 The ggml authors

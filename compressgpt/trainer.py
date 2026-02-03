@@ -1348,98 +1348,76 @@ class CompressTrainer:
         formats: List[str]
     ):
         """
-        Convert model to GGUF format using llama-cpp-python.
+        Convert model to GGUF format using bundled llama.cpp conversion code.
+        
+        This uses the vendored gguf-py library from llama.cpp for pure-Python
+        conversion. Supports quantization types: f32, f16, bf16, q8_0, tq1_0, tq2_0.
+        
+        Note: More advanced quantization (q4_0, q4_k, etc.) requires the external
+        llama-quantize binary from llama.cpp.
         
         Args:
-            source_model_path: Path to source PyTorch model
+            source_model_path: Path to source PyTorch/HuggingFace model
             output_dir: Output directory for GGUF files
-            formats: List of GGUF quantization formats (e.g., ["f16", "q4_0", "q8_0"])
+            formats: List of GGUF quantization formats (e.g., ["f16", "q8_0"])
         """
+        from compressgpt.gguf_converter import convert_to_gguf, check_model_supported
+        
         os.makedirs(output_dir, exist_ok=True)
         
-        try:
-            # Try using llama-cpp-python's convert script
-            import subprocess
-            
-            # First, convert to GGUF FP16 (base format)
-            logger.info("Converting PyTorch model to GGUF FP16...")
-            base_gguf = os.path.join(output_dir, "model-f16.gguf")
-            
-            # Use convert.py from llama.cpp if available
-            convert_cmd = [
-                "python", "-m", "llama_cpp.convert",
-                source_model_path,
-                "--outfile", base_gguf,
-                "--outtype", "f16"
-            ]
-            
-            result = subprocess.run(
-                convert_cmd,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            if result.returncode != 0:
-                # Fallback: Try using transformers export
-                logger.warning("llama_cpp.convert not available, using manual conversion...")
-                self._manual_gguf_conversion(source_model_path, base_gguf)
-            
-            logger.info(f"✓ Base GGUF created: {base_gguf}")
-            
-            # Now quantize to requested formats
-            for fmt in formats:
-                if fmt == "f16":
-                    continue  # Already created
-                
-                logger.info(f"Quantizing to {fmt.upper()}...")
-                output_file = os.path.join(output_dir, f"model-{fmt}.gguf")
-                
-                quantize_cmd = [
-                    "python", "-m", "llama_cpp.quantize",
-                    base_gguf,
-                    output_file,
-                    fmt.upper()
-                ]
-                
-                result = subprocess.run(
-                    quantize_cmd,
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-                
-                logger.info(f"✓ Quantized to {fmt.upper()}: {output_file}")
-                
-        except Exception as e:
-            logger.error(f"GGUF conversion error: {e}")
+        # Check if model architecture is supported
+        is_supported, arch_info = check_model_supported(source_model_path)
+        if not is_supported:
             raise RuntimeError(
-                f"GGUF conversion failed: {e}\n\n"
-                "Make sure llama-cpp-python is installed with:\n"
-                "  pip install llama-cpp-python\n\n"
-                "Or install llama.cpp tools manually."
+                f"Model architecture not supported for GGUF conversion: {arch_info}\n\n"
+                "Supported architectures include: LLaMA, Mistral, Phi, Qwen, Falcon, etc.\n"
+                "For unsupported models, use the merged FP16 model with external converters."
             )
-    
-    def _manual_gguf_conversion(self, source_path: str, output_path: str):
-        """
-        Fallback manual GGUF conversion for when llama.cpp tools are not available.
         
-        This is a simplified conversion - for production use, install llama.cpp tools.
-        """
-        logger.warning(
-            "Manual GGUF conversion is experimental.\n"
-            "For best results, install llama.cpp:\n"
-            "  git clone https://github.com/ggerganov/llama.cpp\n"
-            "  cd llama.cpp && make\n"
-            "  python convert.py <model_path>"
-        )
+        logger.info(f"Detected model architecture: {arch_info}")
         
-        # TODO: Implement basic GGUF writer
-        # For now, just raise an error directing to proper tools
-        raise NotImplementedError(
-            "Manual GGUF conversion not yet implemented.\n"
-            "Please install llama-cpp-python or llama.cpp tools."
-        )
+        # Pure-Python supported quantization types
+        python_quant_types = {"f32", "f16", "bf16", "q8_0", "tq1_0", "tq2_0", "auto"}
+        
+        # Separate formats into Python-supported vs binary-required
+        python_formats = [f for f in formats if f.lower() in python_quant_types]
+        binary_formats = [f for f in formats if f.lower() not in python_quant_types]
+        
+        if binary_formats:
+            logger.warning(
+                f"Formats {binary_formats} require llama-quantize binary (not bundled).\n"
+                "To use these formats, install llama.cpp and use llama-quantize on the output.\n"
+                f"Proceeding with Python-supported formats: {python_formats}"
+            )
+        
+        # Convert to each format
+        created_files = []
+        for fmt in python_formats:
+            fmt_lower = fmt.lower()
+            output_file = os.path.join(output_dir, f"model-{fmt_lower}.gguf")
+            
+            logger.info(f"Converting to {fmt_lower.upper()}...")
+            try:
+                result_path = convert_to_gguf(
+                    model_path=source_model_path,
+                    output_path=output_file,
+                    quantization=fmt_lower,
+                    verbose=False
+                )
+                created_files.append(str(result_path))
+                logger.info(f"✓ Created: {result_path}")
+            except Exception as e:
+                logger.error(f"Failed to convert to {fmt}: {e}")
+                raise
+        
+        # Print instructions for binary-required formats
+        if binary_formats and created_files:
+            base_gguf = created_files[0]  # Use first created file as base
+            logger.info(
+                f"\n📦 To create additional quantizations ({binary_formats}), run:\n"
+                f"   llama-quantize {base_gguf} <output.gguf> <QUANT_TYPE>\n"
+                f"\n   Example: llama-quantize {base_gguf} model-q4_k.gguf Q4_K_M"
+            )
     
     def _print_summary(self):
         """Print summary of all stages."""

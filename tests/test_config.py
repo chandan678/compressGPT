@@ -246,74 +246,27 @@ class TestDeploymentConfig:
     """
     Tests for DeploymentConfig validation.
     
-    This is where the original bug occurred - auto-creating QuantizationConfig
-    for 8-bit without specifying quant_type.
+    DeploymentConfig now only supports GGUF formats (f16, bf16, q8_0) which
+    use the bundled llama.cpp conversion code.
     """
     
     def test_default_config_valid(self):
         """Test that default DeploymentConfig is valid."""
         config = DeploymentConfig()
         assert config.save_merged_fp16 == True
-        assert config.quant_config is None  # No quantization by default
+        assert config.save_gguf_q8_0 == False  # Not enabled by default
     
-    def test_4bit_auto_creates_valid_quant_config(self):
-        """
-        Test that requesting 4-bit automatically creates valid QuantizationConfig.
-        """
-        config = DeploymentConfig(save_quantized_4bit=True)
-        
-        assert config.quant_config is not None
-        assert config.quant_config.bits == 4
-        assert config.quant_config.quant_type == "nf4"  # Correct default for 4-bit
-    
-    def test_8bit_auto_creates_valid_quant_config(self):
-        """
-        CRITICAL: Test that requesting 8-bit creates valid QuantizationConfig.
-        
-        This is the bug we found - auto-creating 8-bit config must use
-        quant_type="int8", not the default "nf4".
-        """
-        config = DeploymentConfig(save_quantized_8bit=True)
-        
-        assert config.quant_config is not None
-        assert config.quant_config.bits == 8
-        assert config.quant_config.quant_type == "int8"  # Must be int8 for 8-bit!
-    
-    def test_both_4bit_and_8bit_raises(self):
-        """
-        Test that requesting both 4-bit and 8-bit without explicit config raises.
-        
-        Can't auto-create a single QuantizationConfig for both.
-        """
-        with pytest.raises(ValueError, match="Cannot enable both save_quantized_4bit and save_quantized_8bit"):
-            DeploymentConfig(
-                save_quantized_4bit=True,
-                save_quantized_8bit=True
-            )
-    
-    def test_mismatched_quant_config_raises(self):
-        """Test that mismatched quant_config raises ValueError."""
-        with pytest.raises(ValueError, match="quant_config.bits != 4"):
-            DeploymentConfig(
-                save_quantized_4bit=True,
-                quant_config=QuantizationConfig(bits=8, quant_type="int8")
-            )
-        
-        with pytest.raises(ValueError, match="quant_config.bits != 8"):
-            DeploymentConfig(
-                save_quantized_8bit=True,
-                quant_config=QuantizationConfig(bits=4, quant_type="nf4")
-            )
-    
-    def test_explicit_quant_config_used(self):
-        """Test that explicit quant_config is used instead of auto-creation."""
-        custom_config = QuantizationConfig(bits=4, quant_type="fp4")
+    def test_gguf_formats_supported(self):
+        """Test that supported GGUF formats can be enabled."""
         config = DeploymentConfig(
-            save_quantized_4bit=True,
-            quant_config=custom_config
+            save_gguf_f16=True,
+            save_gguf_bf16=True,
+            save_gguf_q8_0=True
         )
         
-        assert config.quant_config.quant_type == "fp4"  # Uses custom config
+        assert config.save_gguf_f16 == True
+        assert config.save_gguf_bf16 == True
+        assert config.save_gguf_q8_0 == True
     
     def test_has_any_output(self):
         """Test has_any_output() method."""
@@ -328,7 +281,7 @@ class TestDeploymentConfig:
         # GGUF only
         config_gguf = DeploymentConfig(
             save_merged_fp16=False,
-            save_gguf_q4_0=True
+            save_gguf_q8_0=True
         )
         assert config_gguf.has_any_output() == True
     
@@ -336,17 +289,28 @@ class TestDeploymentConfig:
         """Test get_gguf_formats() method."""
         config = DeploymentConfig(
             save_gguf_f16=True,
-            save_gguf_q4_0=True,
+            save_gguf_bf16=True,
             save_gguf_q8_0=True
         )
         
         formats = config.get_gguf_formats()
-        assert formats == ["f16", "q4_0", "q8_0"]
+        assert formats == ["f16", "bf16", "q8_0"]
     
     def test_no_gguf_formats(self):
         """Test get_gguf_formats() returns empty list when none enabled."""
         config = DeploymentConfig()
         assert config.get_gguf_formats() == []
+    
+    def test_multiple_formats_simultaneously(self):
+        """Test enabling multiple output formats at once."""
+        config = DeploymentConfig(
+            save_merged_fp16=True,
+            save_gguf_f16=True,
+            save_gguf_q8_0=True
+        )
+        
+        assert config.has_any_output() == True
+        assert len(config.get_gguf_formats()) == 2
 
 
 class TestConfigIntegration:
@@ -380,20 +344,16 @@ class TestConfigIntegration:
         assert quant_config_4bit.bits == 4
     
     def test_deployment_config_all_formats(self):
-        """Test deploying to all formats simultaneously (except conflicting bits)."""
+        """Test deploying to all GGUF formats simultaneously."""
         config = DeploymentConfig(
             save_merged_fp16=True,
-            save_quantized_4bit=True,
-            # save_quantized_8bit=True,  # Can't enable both 4-bit and 8-bit
             save_gguf_f16=True,
-            save_gguf_q4_0=True,
+            save_gguf_bf16=True,
             save_gguf_q8_0=True,
-            quant_config=QuantizationConfig(bits=4, quant_type="nf4")
         )
         
-        # Should work but note: both 4bit and 8bit requested with 4bit config
-        # This is actually a user error that should be caught
         assert config.has_any_output() == True
+        assert len(config.get_gguf_formats()) == 3
     
     def test_minimal_ft_config(self):
         """Test minimal config for FT-only pipeline."""
@@ -409,17 +369,15 @@ class TestConfigIntegration:
         ft_config = LoraConfig(r=16)
         recovery_config = QLoraConfig(train_bits=4)
         training_config = TrainingConfig(num_train_epochs=3)
-        quant_config_4bit = QuantizationConfig(bits=4, quant_type="nf4")
         deployment_config = DeploymentConfig(
             save_merged_fp16=True,
-            save_quantized_4bit=True,
-            quant_config=quant_config_4bit
+            save_gguf_q8_0=True,
         )
         
         # All configs should be valid
         assert ft_config.r == 16
         assert recovery_config.train_bits == 4
-        assert deployment_config.quant_config.bits == 4
+        assert deployment_config.save_gguf_q8_0 == True
 
 
 class TestConfigEdgeCases:
@@ -454,29 +412,20 @@ class TestConfigEdgeCases:
             with pytest.raises(ValueError, match=error_msg):
                 QuantizationConfig(bits=bits, quant_type=quant_type)
     
-    def test_deployment_config_explicit_quant_config(self):
+    def test_deployment_config_gguf_only(self):
         """
-        Test that users can provide explicit quant_config for advanced use cases.
+        Test deployment config with only GGUF outputs.
         
-        If user wants both 4-bit and 8-bit, they need separate configs or explicit control.
+        Users who only need GGUF can disable merged_fp16 to save disk space.
         """
-        quant_config_4bit = QuantizationConfig(bits=4, quant_type="nf4")
         config = DeploymentConfig(
-            save_quantized_4bit=True,
-            quant_config=quant_config_4bit
+            save_merged_fp16=False,
+            save_gguf_q8_0=True
         )
         
-        assert config.quant_config.bits == 4
-        assert config.quant_config.quant_type == "nf4"
-        
-        # User can't enable both bits, but can control which one explicitly
-        # For 8-bit output, create separate DeploymentConfig:
-        quant_config_8bit = QuantizationConfig(bits=8, quant_type="int8")
-        config_8bit = DeploymentConfig(
-            save_quantized_8bit=True,
-            quant_config=quant_config_8bit
-        )
-        assert config_8bit.quant_config.bits == 8
+        assert config.save_merged_fp16 == False
+        assert config.save_gguf_q8_0 == True
+        assert config.has_any_output() == True
     
     def test_zero_and_negative_values_caught(self):
         """Test that zero and negative values are caught across configs."""
