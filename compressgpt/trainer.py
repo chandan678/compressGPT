@@ -1273,53 +1273,13 @@ class CompressTrainer:
             del model
             clear_gpu_memory()
         
-        # Format 2: Quantized 4-bit
-        if self.deployment_config.save_quantized_4bit:
-            logger.info("\nDeploying: Quantized 4-bit")
-            quant4_dir = os.path.join(deploy_dir, "quantized_4bit")
-            os.makedirs(quant4_dir, exist_ok=True)
-            
-            model = self._apply_quantization(
-                model_path=source_model_path,
-                bits=4,
-                for_training=False
-            )
-            model.save_pretrained(quant4_dir)
-            self.tokenizer.save_pretrained(quant4_dir)
-            
-            logger.info(f"Quantized 4-bit saved to {quant4_dir}")
-            results["formats"]["quantized_4bit"] = quant4_dir
-            
-            del model
-            clear_gpu_memory()
-        
-        # Format 3: Quantized 8-bit
-        if self.deployment_config.save_quantized_8bit:
-            logger.info("\nDeploying: Quantized 8-bit")
-            quant8_dir = os.path.join(deploy_dir, "quantized_8bit")
-            os.makedirs(quant8_dir, exist_ok=True)
-            
-            model = self._apply_quantization(
-                model_path=source_model_path,
-                bits=8,
-                for_training=False
-            )
-            model.save_pretrained(quant8_dir)
-            self.tokenizer.save_pretrained(quant8_dir)
-            
-            logger.info(f"Quantized 8-bit saved to {quant8_dir}")
-            results["formats"]["quantized_8bit"] = quant8_dir
-            
-            del model
-            clear_gpu_memory()
-        
-        # Format 4: GGUF formats
+        # Format 2: GGUF formats
         gguf_formats = self.deployment_config.get_gguf_formats()
         if gguf_formats:
             logger.info(f"\nDeploying: GGUF formats {gguf_formats}")
             
             try:
-                # Convert to GGUF using llama.cpp tools
+                # Convert to GGUF using bundled llama.cpp code
                 self._convert_to_gguf(
                     source_model_path=source_model_path,
                     output_dir=os.path.join(deploy_dir, "gguf"),
