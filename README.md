@@ -6,8 +6,10 @@ It orchestrates the full lifecycle of Large Language Model (LLM) optimization �
 
 Unlike rigid training scripts, compressGPT allows developers to define **custom compression workflows** by composing high-level stages such as `ft`, `compress_8bit`, and `deploy`. Whether you need a high-accuracy FP16 model for server inference or a compact GGUF Q8_0 model for CPU-only deployment, compressGPT automates tokenization, adapter training, memory-efficient evaluation, and artifact generation to deliver the **smallest runnable model that preserves task-level accuracy**.
 
-> **Result:** From a Llama 3.2 1B model (~2.3 GB FP16), compressGPT produces GGUF inference artifacts of **735 MB (Q4_0)** with **<0.4 pp accuracy loss** on SNIPS intent classification — a **3× size reduction** ready for CPU deployment.  
-> See the [full benchmark](#-benchmark-snips-intent-classification-gguf-on-cpu) below, or run it yourself in the [Colab notebook](https://colab.research.google.com/drive/1Bx3NxiSevrVxftdcBO5FF5tCKWKTozcv).
+> **Result:** From a Llama 3.2 1B model (~2.3 GB FP16), compressGPT produces a **735 MB Q4_0 GGUF** with **<0.4 pp accuracy loss** on SNIPS intent classification — **98.3% accurate, 4.4 samples/sec on CPU**.  
+>  
+> The entire pipeline — fine-tuning, 8-bit compression with recovery, and GGUF export — **runs for free on Google Colab's T4 GPU** in under 40 minutes. The output is a single `.gguf` file you can deploy anywhere with [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.com) — no GPU required at inference time, predictable latency (~230 ms P50), and zero serving cost beyond the CPU itself.  
+> Try it: [Open in Colab](https://colab.research.google.com/drive/1Bx3NxiSevrVxftdcBO5FF5tCKWKTozcv) · [Full benchmark](#-benchmark-snips-intent-classification-gguf-on-cpu)
 
 ---
 

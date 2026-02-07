@@ -1008,7 +1008,20 @@ class CompressTrainer:
         for stage, result in self.results.items():
             print(f"\n{stage.upper()}:")
             print(f"  Status: {result.get('status', 'unknown')}")
-            print(f"  Output: {result.get('output_dir', 'N/A')}")
+            
+            # Resolve output path from different result structures
+            output = (
+                result.get('output_dir')
+                or result.get('merged_dir')
+                or None
+            )
+            if output:
+                print(f"  Output: {output}")
+            
+            # Show deploy formats
+            if "formats" in result and result["formats"]:
+                for fmt_name, fmt_path in result["formats"].items():
+                    print(f"  {fmt_name}: {fmt_path}")
             
             if "metrics" in result:
                 metrics = result["metrics"]
