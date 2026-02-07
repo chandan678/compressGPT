@@ -1,28 +1,6 @@
 """
-Dataset Builder for compressGPT - SFT Training
-
-This module provides the DatasetBuilder class that converts tabular CSV data
-into model-ready training datasets with automatic template formatting, metadata
-generation, and label validation.
-
-Example usage:
-    builder = DatasetBuilder(
-        data_path="data.csv",
-        model_id="meta-llama/Llama-3.2-1B",
-        prompt_template="Do these match?\\nName 1: {name1}\\nName 2: {name2}\\nAnswer:",
-        input_column_map={"name1": "elected_name", "name2": "partner_name"},
-        label_column="labeled_result",
-        valid_labels={"yes", "no"},
-        is_train=True
-    )
-    builder.build()
-    
-    # Access dataset and metadata
-    dataset = builder.dataset
-    metadata = builder.metadata
-    
-    # Optional: save to disk
-    builder.save("output.jsonl")
+Dataset builder for CSV-based SFT classification tasks.
+Converts tabular data into a HuggingFace Dataset plus metadata.
 """
 
 import re
@@ -44,18 +22,8 @@ class DatasetBuilder:
     """
     Model-aware dataset builder for classification tasks.
     
-    Automatically handles:
-    - Model detection (base vs instruct)
-    - Tokenizer loading and label validation
-    - Chat template application (for instruct models)
-    - LabelSpace creation with single-token validation
-    - Train vs eval formatting (with/without gold labels)
-    - Metadata storage for training
-    
-    The prompt template uses {placeholder} syntax for input variables.
-    The text after the last placeholder (e.g., "Answer:") becomes the
-    response_trigger for DataCollatorForCompletionOnlyLM.
-    
+    Uses a prompt template with {placeholder} fields and derives a response
+    trigger from the trailing text after the final placeholder.
     """
     
     def __init__(
@@ -78,32 +46,24 @@ class DatasetBuilder:
         hf_token: Optional[str] = None,
     ):
         """
-        Initialize model-aware DatasetBuilder.
+        Initialize the DatasetBuilder.
         
         Args:
-            data_path: Path to CSV file
-            model_id: HuggingFace model ID or local path (e.g., "meta-llama/Llama-3.2-1B")
-            prompt_template: Prompt string with {placeholder} syntax, ending with response trigger
-                Example: "Compare names:\\nName 1: {name1}\\nName 2: {name2}\\nAnswer:"
-            input_column_map: Maps template placeholders to CSV columns
-                Example: {"name1": "elected_name", "name2": "partner_name"}
-            label_column: CSV column name for the response/label
-            valid_labels: Optional set of valid labels to filter by (e.g., {"yes", "no"})
-            is_train: If True, create training format (text with labels). If False, eval format.
-            model_mode: "auto" (detect), "base", or "instruct"
-            tokenizer: Optional tokenizer override (otherwise loaded from model_id)
-            format_fn: Optional custom formatting function(row_dict) -> text_string
-            keep_fields: If True, keep original prompt/response columns for debugging
-            output_path: If provided, auto-save dataset after build()
-            label_prefix: Prefix for label tokenization (default " " for proper spacing)
-            response_trigger: Optional explicit response trigger (e.g., "Answer:"). If not provided,
-                auto-extracts from prompt_template (text after last {placeholder})
-            hf_token: HuggingFace API token for gated/private models
-        
-        Raises:
-            ValueError: If template placeholders don't match input_column_map keys
-            ValueError: If label_column not found in CSV
-            ValueError: If labels don't tokenize to single tokens
+            data_path: Path to CSV file.
+            model_id: HuggingFace model ID or local path.
+            prompt_template: Prompt with {placeholder} fields.
+            input_column_map: Maps placeholders to CSV columns.
+            label_column: CSV column name for labels.
+            valid_labels: Optional set of labels to keep.
+            is_train: If True, include labels in text.
+            model_mode: "auto", "base", or "instruct".
+            tokenizer: Optional tokenizer override.
+            format_fn: Optional custom formatter.
+            keep_fields: Keep prompt/response columns in the dataset.
+            output_path: If set, auto-save after build().
+            label_prefix: Prefix used for label tokenization.
+            response_trigger: Optional override; otherwise derived from template.
+            hf_token: HuggingFace token for gated models.
         """
         self.data_path = data_path
         self.model_id = model_id
@@ -171,12 +131,7 @@ class DatasetBuilder:
         self._label_counts: dict[str, int] = {}
     
     def _detect_model_mode(self) -> str:
-        """
-        Detect if model is base or instruct by checking for chat template.
-        
-        Returns:
-            "instruct" if tokenizer has chat_template, else "base"
-        """
+        """Detect base vs instruct based on tokenizer chat_template."""
         has_chat_template = (
             hasattr(self.tokenizer, 'chat_template') and 
             self.tokenizer.chat_template is not None
@@ -184,13 +139,7 @@ class DatasetBuilder:
         return "instruct" if has_chat_template else "base"
     
     def _extract_response_trigger(self) -> str:
-        """
-        Extract the response trigger from the prompt template.
-        This is the text after the last {placeholder} that triggers completion.
-        
-        Returns:
-            The response trigger string (e.g., "Answer:")
-        """
+        """Extract the response trigger (text after the last placeholder)."""
         # Find the position after the last placeholder
         last_placeholder_end = 0
         for match in re.finditer(r'\{(\w+)\}', self.prompt_template):
@@ -211,7 +160,7 @@ class DatasetBuilder:
         return response_trigger
     
     def _validate(self) -> None:
-        """Validate that template placeholders match input_column_map and columns exist."""
+        """Validate template placeholders and CSV columns."""
         # Check all template placeholders have mappings
         map_keys = set(self.input_column_map.keys())
         if self._template_placeholders != map_keys:
@@ -237,21 +186,7 @@ class DatasetBuilder:
             raise ValueError(f"Label column '{self.label_column}' not found in CSV. Available: {csv_columns}")
     
     def build(self) -> "DatasetBuilder":
-        """
-        Build the model-aware dataset.
-        
-        Process flow:
-        1. Extract labels and create LabelSpace (validates single-token constraint)
-        2. Build prompts from template
-        3. Format text column based on model_mode:
-           - base: prompt + trigger + label
-           - instruct: chat_template(prompt) + trigger + label
-        4. Create train or eval dataset based on is_train flag
-        5. Optionally auto-save if output_path provided
-        
-        Returns:
-            self (DatasetBuilder instance for chaining)
-        """
+        """Build the dataset and metadata."""
         logger.info("\n" + "=" * 60)
         logger.info("Building dataset")
         logger.info("=" * 60)
@@ -353,16 +288,7 @@ class DatasetBuilder:
         return self
     
     def _format_text(self, prompt: str, label: Optional[str]) -> str:
-        """
-        Format text for training or eval based on model_mode.
-        
-        Args:
-            prompt: Filled-in prompt with values substituted
-            label: Label string (if training) or None (if eval/prompt-only)
-        
-        Returns:
-            Formatted text string ready for SFTTrainer
-        """
+        """Format text for training or eval based on model_mode."""
         if self.model_mode == "base":
             # Base model: simple concatenation
             if label is None:
@@ -398,12 +324,7 @@ class DatasetBuilder:
             raise ValueError(f"Unknown model_mode: {self.model_mode}")
     
     def _build_metadata(self) -> dict:
-        """
-        Build complete metadata dict for training.
-        
-        Returns:
-            Metadata dictionary with model info, LabelSpace, and counts
-        """
+        """Build metadata dict for training and inference."""
         label_space_dict = self._label_space.to_dict()
         
         return {
@@ -422,41 +343,20 @@ class DatasetBuilder:
     
     @property
     def dataset(self) -> Dataset:
-        """
-        Get the built HuggingFace Dataset.
-        
-        Returns:
-            HuggingFace Dataset instance
-        
-        Raises:
-            RuntimeError: If build() has not been called yet
-        """
+        """Return the built Dataset (requires build())."""
         if self._dataset is None:
             raise RuntimeError("Dataset not built yet. Call build() first.")
         return self._dataset
     
     @property
     def metadata(self) -> dict:
-        """
-        Get the complete metadata dict.
-        
-        Returns:
-            Metadata dictionary with model info, LabelSpace, counts
-        
-        Raises:
-            RuntimeError: If build() has not been called yet
-        """
+        """Return metadata (requires build())."""
         if self._metadata is None:
             raise RuntimeError("Metadata not available. Call build() first.")
         return self._metadata
     
     def get_metadata(self) -> dict:
-        """
-        Get metadata (kept for compatibility).
-        
-        Returns:
-            Complete metadata dictionary
-        """
+        """Return metadata (compatibility alias)."""
         return self.metadata
     
     def _print_summary(self, skipped_nan: int, skipped_invalid_label: int) -> None:
@@ -488,19 +388,7 @@ class DatasetBuilder:
         print("=" * 60 + "\n")
     
     def save(self, output_path: Optional[str] = None) -> str:
-        """
-        Save the dataset to JSONL format.
-        
-        Args:
-            output_path: Path for output file (uses self.output_path if None)
-        
-        Returns:
-            Path where dataset was saved
-        
-        Raises:
-            RuntimeError: If build() has not been called yet
-            ValueError: If no output_path provided
-        """
+        """Save the dataset to JSONL."""
         if not self._formatted_data:
             raise RuntimeError("No data to save. Call build() first.")
         

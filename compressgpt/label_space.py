@@ -1,8 +1,6 @@
 """
-LabelSpace - Manages label tokenization and validation for CompressGPT.
-
-Ensures all labels map to single tokens and provides consistent label handling
-across dataset building, training, and inference.
+LabelSpace manages label tokenization and validation.
+Ensures labels map to single tokens and provides stable mappings.
 """
 
 from typing import Optional
@@ -15,33 +13,7 @@ logger = logging.getLogger(__name__)
 class LabelSpace:
     """
     Manages label vocabulary and tokenization for classification tasks.
-    
-    Validates that all labels tokenize to single tokens (required for
-    completion-only training) and provides mappings between labels and token IDs.
-    
-    Attributes:
-        labels: Sorted list of canonical label strings (e.g., ["no", "partial", "yes"])
-        label_prefix: Prefix added before labels for tokenization (default " ")
-        label_token_ids: Dict mapping label string to token ID
-        id_to_label: Dict mapping token ID to label string
-        valid_token_ids: Sorted list of valid label token IDs (for logits indexing)
-        single_token_labels: Always True (multi-token labels not yet supported)
-    
-    Example:
-        from transformers import AutoTokenizer
-        
-        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
-        label_space = LabelSpace(
-            tokenizer=tokenizer,
-            labels=["yes", "no"],
-            label_prefix=" "  # Leading space for proper tokenization
-        )
-        
-        # Use in training
-        valid_ids = label_space.valid_token_ids  # [3763, 912]
-        
-        # Decode predictions
-        label = label_space.id_to_label[predicted_token_id]
+    Validates single-token labels and exposes label/token mappings.
     """
     
     def __init__(
@@ -50,19 +22,7 @@ class LabelSpace:
         labels: list[str],
         label_prefix: str = " ",
     ):
-        """
-        Initialize LabelSpace with tokenizer and label list.
-        
-        Args:
-            tokenizer: HuggingFace tokenizer for the model
-            labels: List of label strings (will be sorted and normalized)
-            label_prefix: Prefix added before labels during tokenization (default " ")
-                         Important: " yes" tokenizes differently than "yes"
-        
-        Raises:
-            ValueError: If any label tokenizes to multiple tokens
-            ValueError: If duplicate labels exist after normalization
-        """
+        """Initialize LabelSpace with a tokenizer and label list."""
         self.tokenizer = tokenizer
         self.label_prefix = label_prefix
         
@@ -126,12 +86,7 @@ class LabelSpace:
         logger.info(f"Token IDs: {self.label_token_ids}")
     
     def to_dict(self) -> dict:
-        """
-        Serialize LabelSpace to dictionary for storage/transmission.
-        
-        Returns:
-            Dictionary containing all LabelSpace fields (no tokenizer)
-        """
+        """Serialize LabelSpace to a dictionary (no tokenizer)."""
         return {
             "labels": self.labels,
             "label_prefix": self.label_prefix,
@@ -143,16 +98,7 @@ class LabelSpace:
     
     @classmethod
     def from_dict(cls, data: dict, tokenizer) -> "LabelSpace":
-        """
-        Deserialize LabelSpace from dictionary.
-        
-        Args:
-            data: Dictionary from to_dict()
-            tokenizer: HuggingFace tokenizer
-        
-        Returns:
-            Reconstructed LabelSpace instance
-        """
+        """Deserialize LabelSpace from a dictionary."""
         # Create instance using normal init (validates everything)
         instance = cls(
             tokenizer=tokenizer,
@@ -170,27 +116,11 @@ class LabelSpace:
         return instance
     
     def validate_token_id(self, token_id: int) -> bool:
-        """
-        Check if a token ID is a valid label.
-        
-        Args:
-            token_id: Token ID to validate
-        
-        Returns:
-            True if token_id is in valid_token_ids
-        """
+        """Return True if token_id is a valid label."""
         return token_id in self.valid_token_ids
     
     def decode_token_id(self, token_id: int) -> Optional[str]:
-        """
-        Decode a token ID to its label string.
-        
-        Args:
-            token_id: Token ID to decode
-        
-        Returns:
-            Label string if valid, None otherwise
-        """
+        """Decode a token ID to its label string."""
         return self.id_to_label.get(token_id)
     
     def __repr__(self) -> str:

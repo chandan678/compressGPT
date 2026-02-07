@@ -16,13 +16,13 @@ def __getattr__(name):
     if name == "CompressTrainer":
         from compressgpt.trainer import CompressTrainer
         return CompressTrainer
-    elif name in ("LoraConfig", "QLoraConfig", "TrainingConfig", 
-                  "PipelineConfig", "QuantizationConfig", "DeploymentConfig"):
+    elif name in ("LoraConfig", "QLoraConfig", "TrainingConfig",
+                  "QuantizationConfig", "DeploymentConfig"):
         from compressgpt import config as cfg
         return getattr(cfg, name)
     raise AttributeError(f"module 'compressgpt' has no attribute '{name}'")
 
-__version__ = "0.2.0"
+__version__ = "0.3.1"
 __all__ = [
     "DatasetBuilder",
     "ComputeMetrics",
@@ -31,7 +31,6 @@ __all__ = [
     "LoraConfig",
     "QLoraConfig",
     "TrainingConfig",
-    "PipelineConfig",
     "QuantizationConfig",
     "DeploymentConfig",
 ]

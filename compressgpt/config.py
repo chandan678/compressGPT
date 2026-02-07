@@ -169,46 +169,6 @@ class TrainingConfig:
 
 
 @dataclass
-class PipelineConfig:
-    """
-    Configuration for the complete training pipeline.
-    
-    Attributes:
-        stages: List of stages to run ("ft", "qlora", "merge")
-        skip_if_exists: Skip stage if output directory exists
-        output_dir: Root output directory for all stages
-        ft_output_dir: Directory for FT LoRA adapters
-        qlora_output_dir: Directory for QLoRA adapters
-        merged_output_dir: Directory for merged model
-    """
-    stages: List[str] = field(default_factory=lambda: ["ft", "qlora", "merge"])
-    skip_if_exists: bool = False
-    output_dir: str = "./output"
-    ft_output_dir: Optional[str] = None
-    qlora_output_dir: Optional[str] = None
-    merged_output_dir: Optional[str] = None
-    
-    def __post_init__(self):
-        """Validate and set default subdirectories."""
-        valid_stages = ["ft", "qlora", "merge"]
-        for stage in self.stages:
-            if stage not in valid_stages:
-                raise ValueError(
-                    f"Invalid stage '{stage}'. Valid stages: {valid_stages}"
-                )
-        
-        # Set default subdirectories if not provided
-        if self.ft_output_dir is None:
-            self.ft_output_dir = f"{self.output_dir}/ft_lora_adapter"
-        
-        if self.qlora_output_dir is None:
-            self.qlora_output_dir = f"{self.output_dir}/qlora_adapter"
-        
-        if self.merged_output_dir is None:
-            self.merged_output_dir = f"{self.output_dir}/merged_model"
-
-
-@dataclass
 class QuantizationConfig:
     """
     Shared quantization configuration for training and deployment.

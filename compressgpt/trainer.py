@@ -1,9 +1,4 @@
-"""
-CompressGPT Trainer - Model Compression Pipeline
-
-Orchestrates model compression workflow: FT -> Quantize -> Recovery -> Merge
-with automatic metadata extraction from DatasetBuilder.
-"""
+"""CompressGPT training pipeline: FT -> Compress -> Deploy."""
 
 import os
 import logging
@@ -13,18 +8,14 @@ import torch
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     EarlyStoppingCallback
 )
 from peft import LoraConfig as PeftLoraConfig, PeftModel, get_peft_model
 from trl import SFTTrainer, SFTConfig
-from datasets import Dataset
-
 from .config import LoraConfig, QLoraConfig, TrainingConfig, QuantizationConfig, DeploymentConfig
 from .compute_metrics import ComputeMetrics
 from .label_space import LabelSpace
 from .utils import (
-    validate_response_template,
     setup_data_collator,
     clear_gpu_memory,
     save_metrics,
@@ -37,30 +28,12 @@ logger = logging.getLogger(__name__)
 
 class CompressTrainer:
     """
-    CompressGPT Trainer - Model Compression Pipeline.
+    CompressGPT Trainer.
     
-    Orchestrates compression-focused workflow:
-    1. FT: Fine-tune on FP16 base (establish accuracy baseline)
-    2. Compress: Atomic stage that Quantizes -> Trains Recovery -> Merges to FP16
-    3. Deploy: Convert final model to production formats (GGUF, Quantized, etc.)
-    
-    Valid stage combinations:
-    - ["ft", "deploy"]: Basic LoRA fine-tuning + deployment
-    - ["ft", "compress_8bit", "deploy"]: Full 8-bit compression pipeline
-    - ["ft", "compress_4bit", "deploy"]: Full 4-bit compression pipeline
-    
-    Example:
-        from compressgpt import DatasetBuilder, CompressTrainer
-        
-        builder = DatasetBuilder(...).build()
-        
-        # Full compression pipeline
-        trainer = CompressTrainer(
-            model_id="meta-llama/Llama-3.2-1B",
-            dataset_builder=builder,
-            stages=["ft", "compress_4bit", "deploy"]
-        )
-        results = trainer.run()
+    Stages:
+    - ft: LoRA fine-tuning on FP16 base
+    - compress_8bit / compress_4bit: quantize + recovery + merge
+    - deploy: artifact conversion (GGUF, merged FP16)
     """
     
     def __init__(
@@ -116,7 +89,7 @@ class CompressTrainer:
         self.train_test_split = train_test_split
         self.seed = seed
         
-        # Validate stages (support both old and new names)
+        # Validate stages
         valid_stages = {
             "ft", 
             "compress_8bit", "compress_4bit",
@@ -125,16 +98,6 @@ class CompressTrainer:
         invalid = set(stages) - valid_stages
         if invalid:
             raise ValueError(f"Invalid stages: {invalid}. Must be from {valid_stages}")
-        
-        # Warn about deprecated stage names
-        deprecated_stages = {"quantize_8bit", "quantize_4bit", "recovery"}
-        if any(s in deprecated_stages for s in stages):
-            logger.warning(
-                "Using deprecated stage names. Please migrate to new atomic stages:\n"
-                "  Old: ['ft', 'quantize_8bit', 'recovery', 'merge']\n"
-                "  New: ['ft', 'compress_8bit', 'deploy']\n"
-                "  The compress_* stages now include recovery and merge automatically."
-            )
         
         logger.info("=" * 60)
         logger.info("CompressGPT Trainer - Initializing")
@@ -273,10 +236,10 @@ class CompressTrainer:
     def _warn_device_limitations(self):
         """Warn about device-specific limitations."""
         if self.device_type == "mps":
-            # Check if quantization/recovery stages are enabled
-            if any(stage in self.stages for stage in ["quantize_8bit", "quantize_4bit", "recovery"]):
+            # Check if quantization stages are enabled
+            if any(stage in self.stages for stage in ["compress_8bit", "compress_4bit"]):
                 warnings.warn(
-                    "Apple Silicon (MPS) detected with quantization/recovery stages.\n"
+                    "Apple Silicon (MPS) detected with compression stages.\n"
                     "BitsAndBytes quantization is NOT supported on MPS.\n"
                     "Training will fail. Consider:\n"
                     "  1. Use only 'ft' stage: stages=['ft', 'merge']\n"
@@ -356,18 +319,7 @@ class CompressTrainer:
         return model
     
     def _compress_atomic(self, bits: int) -> Dict:
-        """
-        Atomic compress stage: Quantize -> Train Recovery -> Merge to FP16.
-        
-        This replaces the separate quantize + recovery + merge stages.
-        The result is always a merged FP16 model (canonical format).
-        
-        Args:
-            bits: Quantization bits (4 or 8)
-        
-        Returns:
-            Result dictionary with metrics and paths
-        """
+        """Run quantize -> recovery -> merge for a given bit-width."""
         logger.info("\n" + "=" * 60)
         logger.info(f"Stage: Compress to {bits}-bit (Atomic)")
         logger.info("=" * 60)
@@ -588,16 +540,7 @@ class CompressTrainer:
         }
     
     def run(self) -> Dict:
-        """
-        Run the complete training pipeline.
-        
-        Supports both old and new stage names:
-        - Old: ["ft", "quantize_8bit", "recovery", "merge"]
-        - New: ["ft", "compress_8bit", "merge", "deploy"]
-        
-        Returns:
-            Dictionary with results from each stage
-        """
+        """Run the training pipeline."""
         logger.info("=" * 60)
         logger.info("Starting CompressGPT Training Pipeline")
         logger.info("=" * 60)
@@ -783,308 +726,8 @@ class CompressTrainer:
             "metrics": metrics
         }
     
-    def _quantize_model(self, bits: int) -> Dict:
-        """
-        Quantize the last trained checkpoint to 8-bit or 4-bit.
-        
-        Args:
-            bits: 8 or 4 for quantization bits
-        
-        Returns:
-            Result dictionary with status and output path
-        """
-        logger.info("\n" + "=" * 60)
-        logger.info(f"Stage: Quantize to {bits}-bit")
-        logger.info("=" * 60)
-        
-        # Check device compatibility
-        if self.device_type == "mps":
-            raise RuntimeError(
-                f"{bits}-bit quantization is not supported on Apple Silicon (MPS).\n"
-                "BitsAndBytes quantization requires CUDA.\n\n"
-                "Solutions:\n"
-                "  1. Skip quantization stages\n"
-                "  2. Train on a CUDA GPU"
-            )
-        
-        output_dir = self.quantized_8bit_dir if bits == 8 else self.quantized_4bit_dir
-        
-        # Skip if exists
-        if self.resume and os.path.exists(output_dir):
-            logger.info(f"⏭️  Skipping quantize_{bits}bit stage - output exists: {output_dir}")
-            return {"status": "skipped", "output_dir": output_dir, "bits": bits}
-        
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Extract base model path
-        base_model_path, is_adapter = self._get_base_model_path(self.model_id)
-        if is_adapter:
-            logger.info(f"⚠️  Using base model from adapter config: {base_model_path}")
-        
-        # Determine which checkpoint to quantize (FT if available, else base model)
-        if os.path.exists(self.ft_output_dir):
-            logger.info(f"Quantizing FT adapter + base model to {bits}-bit")
-            # Load base model
-            base_model = AutoModelForCausalLM.from_pretrained(
-                base_model_path,
-                torch_dtype=torch.float16,
-                device_map="auto",
-                token=self.hf_token
-            )
-            # Load and merge FT adapter
-            model = PeftModel.from_pretrained(base_model, self.ft_output_dir)
-            model = model.merge_and_unload()
-        else:
-            logger.info(f"Quantizing base model to {bits}-bit (no FT checkpoint found)")
-            model = AutoModelForCausalLM.from_pretrained(
-                base_model_path,
-                torch_dtype=torch.float16,
-                device_map="auto",
-                token=self.hf_token
-            )
-        
-        # Log device placement
-        if hasattr(model, 'hf_device_map'):
-            logger.info(f"Device map: {model.hf_device_map}")
-        else:
-            model_device = next(model.parameters()).device
-            logger.info(f"Model loaded on: {model_device}")
-        
-        # Setup quantization config
-        logger.info(f"Applying {bits}-bit quantization...")
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=(bits == 4),
-            load_in_8bit=(bits == 8),
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_quant_type=self.recovery_config.bnb_4bit_quant_type if bits == 4 else "fp4",
-            bnb_4bit_use_double_quant=self.recovery_config.bnb_4bit_use_double_quant if bits == 4 else False,
-        )
-        
-        # Reload with quantization (have to reload, can't quantize in-place)
-        del model
-        clear_gpu_memory()
-        
-        # Quantize by loading with quantization config
-        quantized_model = AutoModelForCausalLM.from_pretrained(
-            base_model_path,
-            quantization_config=bnb_config,
-            device_map="auto",
-            token=self.hf_token
-        )
-        
-        # If FT exists, load adapter on quantized base
-        if os.path.exists(self.ft_output_dir):
-            logger.info("Loading FT adapter on quantized base")
-            quantized_model = PeftModel.from_pretrained(
-                quantized_model,
-                self.ft_output_dir,
-                is_trainable=False
-            )
-            # Merge adapter
-            quantized_model = quantized_model.merge_and_unload()
-        
-        # Save quantized model
-        logger.info(f"Saving {bits}-bit quantized model to {output_dir}")
-        quantized_model.save_pretrained(output_dir)
-        self.tokenizer.save_pretrained(output_dir)
-        
-        logger.info(f"{bits}-bit quantization complete")
-        
-        return {
-            "status": "completed",
-            "output_dir": output_dir,
-            "bits": bits
-        }
-    
-    def _train_stage_recovery(self) -> Dict:
-        """
-        Train Recovery stage: LoRA on quantized base to compensate quantization error.
-        Uses full training epochs (same as FT) to recover accuracy lost during quantization.
-        """
-        logger.info("\n" + "=" * 60)
-        logger.info(f"Stage: Recovery Training ({self.recovery_config.train_bits}-bit)")
-        logger.info("=" * 60)
-        
-        # Check device compatibility
-        if self.device_type == "mps":
-            raise RuntimeError(
-                "Recovery training is not supported on Apple Silicon (MPS).\n"
-                "BitsAndBytes quantization requires CUDA.\n\n"
-                "Solutions:\n"
-                "  1. Use only 'ft' stage: stages=['ft', 'merge']\n"
-                "  2. Train on a CUDA GPU\n"
-                "  3. Use CPU (slow): set PYTORCH_ENABLE_MPS_FALLBACK=1 and device_map='cpu'"
-            )
-        
-        output_dir = self.recovery_output_dir
-        
-        # Skip if exists
-        if self.resume and os.path.exists(output_dir):
-            logger.info(f"⏭️  Skipping Recovery stage - output exists: {output_dir}")
-            return {"status": "skipped", "output_dir": output_dir}
-        
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Setup quantization config
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=(self.recovery_config.train_bits == 4),
-            load_in_8bit=(self.recovery_config.train_bits == 8),
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_quant_type=self.recovery_config.bnb_4bit_quant_type,
-            bnb_4bit_use_double_quant=self.recovery_config.bnb_4bit_use_double_quant,
-        )
-        
-        # Determine which checkpoint to recover from
-        # Priority: quantized checkpoint > FT checkpoint > base model
-        if self.recovery_config.train_bits == 8 and os.path.exists(self.quantized_8bit_dir):
-            model_path = self.quantized_8bit_dir
-            logger.info(f"Recovering from 8-bit quantized checkpoint: {model_path}")
-        elif self.recovery_config.train_bits == 4 and os.path.exists(self.quantized_4bit_dir):
-            model_path = self.quantized_4bit_dir
-            logger.info(f"Recovering from 4-bit quantized checkpoint: {model_path}")
-        else:
-            # Extract base model path if model_id is a LoRA adapter
-            base_model_path, is_adapter = self._get_base_model_path(self.model_id)
-            if is_adapter:
-                logger.info(f"⚠️  Using base model from adapter config: {base_model_path}")
-                logger.info(f"   Note: Passed adapter will be ignored, loading base model fresh for quantization")
-            model_path = base_model_path
-            logger.info(f"Recovering from base model (no quantized checkpoint): {model_path}")
-        
-        # Load quantized base model
-        logger.info(f"Loading {self.recovery_config.train_bits}-bit quantized model...")
-        try:
-            base_model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                quantization_config=bnb_config,
-                device_map="auto",
-                token=self.hf_token
-            )
-            
-            # Log actual device placement
-            if hasattr(base_model, 'hf_device_map'):
-                logger.info(f"📍 Device map: {base_model.hf_device_map}")
-            else:
-                model_device = next(base_model.parameters()).device
-                logger.info(f"📍 Quantized model loaded on: {model_device}")
-                
-        except Exception as e:
-            if "CUDA" in str(e) or "cuda" in str(e):
-                raise RuntimeError(
-                    f"Failed to load quantized model: {e}\n\n"
-                    "BitsAndBytes quantization requires CUDA GPU.\n"
-                    f"Current device: {self.device_type}\n\n"
-                    "If on Apple Silicon, use stages=['ft', 'merge'] (skip recovery)"
-                ) from e
-            raise
-        
-        # Apply fresh LoRA config for recovery
-        peft_config = PeftLoraConfig(
-            r=self.recovery_config.r,
-            lora_alpha=self.recovery_config.lora_alpha,
-            lora_dropout=self.recovery_config.lora_dropout,
-            target_modules=self.recovery_config.target_modules,
-            bias=self.recovery_config.bias,
-            task_type=self.recovery_config.task_type
-        )
-        model = get_peft_model(base_model, peft_config)
-        
-        # Setup data collator
-        data_collator = setup_data_collator(
-            self.tokenizer, 
-            self.response_trigger,
-            model_mode=self.model_mode
-        )
-        
-        # Use full training epochs (same as FT) to recover accuracy
-        run_name = self.training_config.run_name or "compressgpt_recovery"
-        
-        sft_config = SFTConfig(
-            output_dir=output_dir,
-            num_train_epochs=self.training_config.num_train_epochs,  # Full epochs
-            per_device_train_batch_size=self.training_config.per_device_train_batch_size,
-            per_device_eval_batch_size=self.training_config.per_device_eval_batch_size,
-            gradient_accumulation_steps=self.training_config.gradient_accumulation_steps,
-            learning_rate=self.training_config.learning_rate,  # Same LR as FT
-            warmup_ratio=self.training_config.warmup_ratio,
-            lr_scheduler_type=self.training_config.lr_scheduler_type,
-            weight_decay=self.training_config.weight_decay,
-            max_length=self.training_config.max_seq_length,
-            logging_steps=self.training_config.logging_steps,
-            eval_strategy=self.training_config.eval_strategy,
-            eval_steps=self.training_config.eval_steps if self.training_config.eval_strategy == "steps" else None,
-            save_strategy=self.training_config.save_strategy,
-            save_steps=self.training_config.save_steps if self.training_config.save_strategy == "steps" else None,
-            save_total_limit=self.training_config.save_total_limit,
-            load_best_model_at_end=self.training_config.load_best_model_at_end,
-            metric_for_best_model=self.training_config.metric_for_best_model,
-            greater_is_better=self.training_config.greater_is_better,
-            fp16=self.training_config.fp16,
-            bf16=False,  # Recovery uses fp16 for compatibility with quantized base
-            report_to=self.training_config.report_to,
-            run_name=run_name,
-            dataset_text_field="text",
-            eval_accumulation_steps=self.training_config.eval_accumulation_steps,
-        )
-        
-        # Setup trainer
-        callbacks = []
-        if self.training_config.early_stopping_patience > 0:
-            callbacks.append(EarlyStoppingCallback(
-                early_stopping_patience=self.training_config.early_stopping_patience,
-                early_stopping_threshold=self.training_config.early_stopping_threshold
-            ))
-        
-        trainer = SFTTrainer(
-            model=model,
-            args=sft_config,
-            train_dataset=self.train_dataset,
-            eval_dataset=self.eval_dataset,
-            processing_class=self.tokenizer,
-            data_collator=data_collator,
-            compute_metrics=self.metrics_computer.as_trainer_callback(),
-            preprocess_logits_for_metrics=self.metrics_computer.get_preprocess_logits(),
-            callbacks=callbacks
-        )
-        
-        # Train
-        import time
-        num_samples = len(self.train_dataset)
-        eff_bs = self.training_config.per_device_train_batch_size * self.training_config.gradient_accumulation_steps
-        logger.info(f"🚀 Recovery Training: {num_samples} samples, {self.training_config.num_train_epochs} epochs, batch_size={eff_bs}")
-        
-        start_time = time.time()
-        trainer.train()
-        duration = time.time() - start_time
-        logger.info(f"✓ Recovery training completed in {duration/60:.1f} minutes")
-        
-        # Evaluate
-        if self.eval_dataset:
-            logger.info("📊 Evaluating...")
-            metrics = trainer.evaluate()
-        else:
-            metrics = {}
-        
-        # Save model
-        logger.info(f"💾 Saving Recovery adapter to {output_dir}")
-        trainer.save_model(output_dir)
-        
-        # Print metrics
-        if metrics:
-            print(format_metrics_table(metrics, "Recovery Stage"))
-        
-        return {
-            "status": "completed",
-            "output_dir": output_dir,
-            "metrics": metrics,
-            "train_bits": self.recovery_config.train_bits
-        }
-    
     def _merge_and_save(self) -> Dict:
-        """
-        Merge LoRA adapters into base model and save as FP16.
-        Automatically detects which adapter to merge (recovery, FT, or quantized).
-        """
+        """Merge LoRA adapters into the base model and save FP16."""
         logger.info("\n" + "=" * 60)
         logger.info("Stage: Merge and Save")
         logger.info("=" * 60)
@@ -1183,17 +826,7 @@ class CompressTrainer:
         }
     
     def _deploy_model(self) -> Dict:
-        """
-        Deploy stage: Convert merged FP16 model to deployment formats.
-        
-        Supports multiple output formats based on deployment_config:
-        - Merged FP16 (baseline)
-        - Quantized 4-bit/8-bit (bitsandbytes)
-        - GGUF formats (f16, q4_0, q4_1, q5_0, q5_1, q8_0)
-        
-        Returns:
-            Result dictionary with output paths for each format
-        """
+        """Convert merged FP16 model to deployment formats."""
         logger.info("\n" + "=" * 60)
         logger.info("Stage: Deploy Model")
         logger.info("=" * 60)
@@ -1307,20 +940,7 @@ class CompressTrainer:
         output_dir: str,
         formats: List[str]
     ):
-        """
-        Convert model to GGUF format using bundled llama.cpp conversion code.
-        
-        This uses the vendored gguf-py library from llama.cpp for pure-Python
-        conversion. Supports quantization types: f32, f16, bf16, q8_0, tq1_0, tq2_0.
-        
-        Note: More advanced quantization (q4_0, q4_k, etc.) requires the external
-        llama-quantize binary from llama.cpp.
-        
-        Args:
-            source_model_path: Path to source PyTorch/HuggingFace model
-            output_dir: Output directory for GGUF files
-            formats: List of GGUF quantization formats (e.g., ["f16", "q8_0"])
-        """
+        """Convert a model to GGUF using the bundled converter."""
         from compressgpt.gguf_converter import convert_to_gguf, check_model_supported
         
         os.makedirs(output_dir, exist_ok=True)
@@ -1388,7 +1008,20 @@ class CompressTrainer:
         for stage, result in self.results.items():
             print(f"\n{stage.upper()}:")
             print(f"  Status: {result.get('status', 'unknown')}")
-            print(f"  Output: {result.get('output_dir', 'N/A')}")
+            
+            # Resolve output path from different result structures
+            output = (
+                result.get('output_dir')
+                or result.get('merged_dir')
+                or None
+            )
+            if output:
+                print(f"  Output: {output}")
+            
+            # Show deploy formats
+            if "formats" in result and result["formats"]:
+                for fmt_name, fmt_path in result["formats"].items():
+                    print(f"  {fmt_name}: {fmt_path}")
             
             if "metrics" in result:
                 metrics = result["metrics"]
