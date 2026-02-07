@@ -6,7 +6,7 @@ It orchestrates the full lifecycle of Large Language Model (LLM) optimization �
 
 Unlike rigid training scripts, compressGPT allows developers to define **custom compression workflows** by composing high-level stages such as `ft`, `compress_8bit`, and `deploy`. Whether you need a high-accuracy FP16 model for server inference or a compact GGUF Q8_0 model for CPU-only deployment, compressGPT automates tokenization, adapter training, memory-efficient evaluation, and artifact generation to deliver the **smallest runnable model that preserves task-level accuracy**.
 
-> **Result:** From a Llama 3.1 8B model (~16 GB FP16), compressGPT produces GGUF inference artifacts of **735 MB (Q4_0)** with **<0.4 pp accuracy loss** on SNIPS intent classification — a **21× size reduction** ready for CPU deployment.  
+> **Result:** From a Llama 3.2 1B model (~2.3 GB FP16), compressGPT produces GGUF inference artifacts of **735 MB (Q4_0)** with **<0.4 pp accuracy loss** on SNIPS intent classification — a **3× size reduction** ready for CPU deployment.  
 > See the [full benchmark](#-benchmark-snips-intent-classification-gguf-on-cpu) below, or run it yourself in the [Colab notebook](https://colab.research.google.com/drive/1Bx3NxiSevrVxftdcBO5FF5tCKWKTozcv).
 
 ---
