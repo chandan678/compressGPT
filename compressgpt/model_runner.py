@@ -1,29 +1,6 @@
 """
-Model Runner for compressGPT Inference
-
-This module provides the ModelRunner class for running inference on datasets
-built with DatasetBuilder. Supports first-token prediction mode for classification.
-
-Flow:
-    1. DatasetBuilder preprocesses data, discovers labels
-    2. ModelRunner runs model, cleans output, maps to token IDs
-    3. ComputeMetrics compares pred vs actual token IDs
-
-Example usage:
-    from compressgpt import DatasetBuilder, ModelRunner, ComputeMetrics
-    
-    # Build dataset and get metadata
-    builder = DatasetBuilder(...).build()
-    dataset = builder.dataset
-    metadata = builder.metadata
-    
-    # Run inference (returns token IDs for both pred and gold)
-    runner = ModelRunner(model, tokenizer, metadata)
-    predictions, gold_labels = runner.run(dataset)
-    
-    # Compute metrics
-    metrics = ComputeMetrics(metadata, tokenizer)
-    results = metrics.compute(predictions, gold_labels)
+ModelRunner handles inference for classification-style prompts.
+It maps next-token predictions to label IDs for metric computation.
 """
 
 import re
@@ -37,18 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 class ModelRunner:
     """
     Runs inference on datasets for classification tasks.
-    
-    The main `run()` method:
-    1. Runs the model on each prompt
-    2. Cleans/extracts the label from model output (handles " yes", "Yes!", etc.)
-    3. Maps cleaned labels to token IDs
-    4. Returns (pred_token_ids, gold_token_ids) for direct metric computation
-    
-    Attributes:
-        model: The HuggingFace model for inference
-        tokenizer: Tokenizer matching the model
-        metadata: Dataset metadata from DatasetBuilder.get_metadata()
-        device: Device to run inference on
+    Returns predicted and gold label token IDs.
     """
     
     # Token ID for unrecognized predictions
@@ -63,21 +29,7 @@ class ModelRunner:
         batch_size: int = 8,
         hf_token: Optional[str] = None,
     ):
-        """
-        Initialize the ModelRunner.
-        
-        Args:
-            model: Either a loaded HuggingFace model OR a model path/ID string.
-                   If string and not a local path, will load from HuggingFace.
-            tokenizer: Either a loaded tokenizer, a tokenizer path/ID, or None.
-                      If None and model is a string, will load matching tokenizer.
-            metadata: Metadata dict from DatasetBuilder.get_metadata(tokenizer).
-                     Required if tokenizer needs validation.
-            device: Device for inference. If None, uses model's device or cuda/mps/cpu
-            batch_size: Batch size for inference
-            hf_token: HuggingFace token for gated/private models. Required if model
-                     is a remote path that needs authentication.
-        """
+        """Initialize the ModelRunner."""
         # Load model if string path/ID provided
         if isinstance(model, str):
             model_path = model
@@ -172,21 +124,7 @@ class ModelRunner:
             self._label_pattern = None
     
     def _extract_label_from_text(self, text: str) -> Optional[str]:
-        """
-        Extract a valid label from model-generated text.
-        
-        Handles cases like:
-        - " yes" -> "yes"
-        - "Yes!" -> "yes"
-        - "The answer is no." -> "no"
-        - "YES" -> "yes"
-        
-        Args:
-            text: The decoded model output text
-            
-        Returns:
-            Normalized label string, or None if no valid label found
-        """
+        """Extract a valid label from model-generated text."""
         # First try: direct match after stripping and lowercasing
         clean = text.strip().lower()
         if clean in self._label_lookup:
@@ -201,18 +139,7 @@ class ModelRunner:
         return None
     
     def _token_id_to_normalized_label(self, token_id: int) -> Optional[str]:
-        """
-        Convert a predicted token ID to a normalized label.
-        
-        First checks if it's a known label token. If not, decodes and
-        tries to extract a label from the text.
-        
-        Args:
-            token_id: The predicted token ID
-            
-        Returns:
-            Normalized label string, or None if not recognized
-        """
+        """Convert a predicted token ID to a normalized label."""
         # Fast path: direct token ID match
         if token_id in self.id_to_label:
             return self.id_to_label[token_id]
@@ -222,15 +149,7 @@ class ModelRunner:
         return self._extract_label_from_text(decoded)
     
     def _clean_and_map_to_token_id(self, raw_token_id: int) -> tuple[int, str, str]:
-        """
-        Clean model output and map to a valid label token ID.
-        
-        Args:
-            raw_token_id: The raw predicted token ID from the model
-            
-        Returns:
-            Tuple of (mapped_token_id, raw_decoded, cleaned_label)
-        """
+        """Clean model output and map to a valid label token ID."""
         raw_decoded = self.tokenizer.decode([raw_token_id])
         
         # Fast path: direct token ID match
@@ -253,24 +172,7 @@ class ModelRunner:
         show_progress: bool = True,
         log_samples: int = 0,
     ) -> tuple[list[int], list[int]]:
-        """
-        Run inference on the dataset.
-        
-        Flow:
-        1. Run model on each prompt to get predicted token
-        2. Clean/extract label from model output (handles " yes", "Yes!", etc.)
-        3. Map cleaned label to token ID
-        4. Return (pred_token_ids, gold_token_ids) for metric computation
-        
-        Args:
-            dataset: HuggingFace Dataset with 'prompt' and 'response' columns
-            show_progress: Whether to show progress bar
-            log_samples: Number of sample predictions to log (0 = none)
-            
-        Returns:
-            Tuple of (predictions, gold_labels) as lists of token IDs.
-            Unrecognized predictions get token ID -1 (UNKNOWN_TOKEN_ID).
-        """
+        """Run inference on a dataset and return prediction/gold token IDs."""
         if self.metadata is None:
             raise ValueError("metadata is required for run(). Provide metadata during initialization.")
         
@@ -400,16 +302,7 @@ class ModelRunner:
         print()
     
     def run_single(self, prompt: str) -> tuple[int, str]:
-        """
-        Run inference on a single prompt.
-        
-        Args:
-            prompt: The prompt string
-            
-        Returns:
-            Tuple of (predicted_token_id, predicted_label_string)
-            If label not recognized, returns (UNKNOWN_TOKEN_ID, raw_decoded)
-        """
+        """Run inference on a single prompt."""
         self.model.eval()
         
         with torch.no_grad():
@@ -434,17 +327,7 @@ class ModelRunner:
                 return self.UNKNOWN_TOKEN_ID, raw_decoded.strip()
     
     def get_logits_for_labels(self, prompt: str) -> dict[str, float]:
-        """
-        Get the logit values for each valid label token.
-        
-        Useful for understanding model confidence across classes.
-        
-        Args:
-            prompt: The prompt string
-            
-        Returns:
-            Dict mapping label string to logit value
-        """
+        """Return logits for each valid label token."""
         self.model.eval()
         
         with torch.no_grad():
@@ -470,36 +353,7 @@ class ModelRunner:
         dataset,
         show_progress: bool = True,
     ) -> list[dict]:
-        """
-        Run inference and return detailed results for each sample.
-        
-        Unlike run(), this returns full information for analysis and CSV export.
-        
-        Args:
-            dataset: HuggingFace Dataset with 'prompt'/'text' and 'response'/'gold_label' columns
-            show_progress: Whether to show progress bar
-            
-        Returns:
-            List of dicts, each containing:
-                - prompt: The input prompt
-                - gold_label: The expected label
-                - pred_label: The predicted label (or "UNKNOWN")
-                - gold_token_id: Token ID of gold label
-                - pred_token_id: Token ID of prediction (-1 if unknown)
-                - raw_decoded: Raw decoded token from model
-                - correct: Boolean indicating if prediction matches gold
-        
-        Example:
-            results = runner.run_detailed(test_builder.dataset)
-            
-            # Save to CSV
-            import pandas as pd
-            df = pd.DataFrame(results)
-            df.to_csv("inference_results.csv", index=False)
-            
-            # Analyze errors
-            errors = [r for r in results if not r["correct"]]
-        """
+        """Run inference and return detailed per-sample results."""
         if self.metadata is None:
             raise ValueError("metadata is required for run_detailed(). Provide metadata during initialization.")
         

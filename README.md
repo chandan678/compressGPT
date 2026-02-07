@@ -6,6 +6,9 @@ It orchestrates the full lifecycle of Large Language Model (LLM) optimization �
 
 Unlike rigid training scripts, compressGPT allows developers to define **custom compression workflows** by composing high-level stages such as `ft`, `compress_8bit`, and `deploy`. Whether you need a high-accuracy FP16 model for server inference or a compact GGUF Q8_0 model for CPU-only deployment, compressGPT automates tokenization, adapter training, memory-efficient evaluation, and artifact generation to deliver the **smallest runnable model that preserves task-level accuracy**.
 
+> **Result:** From a Llama 3.1 8B model (~16 GB FP16), compressGPT produces GGUF inference artifacts of **735 MB (Q4_0)** with **<0.4 pp accuracy loss** on SNIPS intent classification — a **21× size reduction** ready for CPU deployment.  
+> See the [full benchmark](#-benchmark-snips-intent-classification-gguf-on-cpu) below, or run it yourself in the [Colab notebook](https://colab.research.google.com/drive/1Bx3NxiSevrVxftdcBO5FF5tCKWKTozcv).
+
 ---
 
 ## 🚀 Quick Start
@@ -97,6 +100,37 @@ runs/default/deploy/
 ```
 
 ---
+
+## 📊 Benchmark: SNIPS Intent Classification (GGUF on CPU)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1Bx3NxiSevrVxftdcBO5FF5tCKWKTozcv)
+
+The following results show the size/quality/performance trade-offs of advanced GGUF quantization levels on SNIPS (7-way intent classification, 1,400 test utterances).
+
+**Setup**
+- Inference: `llama-cpp-python` (greedy decode, `max_tokens=3`, `n_ctx=512`), CPU (8 threads).
+- Quantizations: `Q8_0` produced by compressGPT's bundled GGUF converter; `Q4_0`, `Q3_K_M`, and `Q2_K` produced using the external `llama-quantize` tool (see note in Deployment section).
+- Metrics:
+  - `valid_rate`: fraction of samples where the model produced one of the allowed label words.
+  - `valid_only_accuracy`: accuracy after filtering `INVALID_OUTPUT` samples (useful to isolate decision quality from output-formatting failures).
+
+| GGUF | Size (MB) | valid_rate | valid_only_accuracy | Samples/sec | P95 latency (ms) |
+|---|---:|---:|---:|---:|---:|
+| Q8_0 | 1259.9 | 99.86% | 98.78% | 3.55 | 608.3 |
+| Q4_0 | 735.2 | 99.86% | 98.43% | 4.36 | 433.2 |
+| Q3_K_M | 658.8 | 97.29% | 98.46% | 3.49 | 548.1 |
+| Q2_K | 554.0 | 75.71% | 66.98% | 3.88 | 436.9 |
+
+**Key takeaways**
+- `Q4_0` is the best default for CPU inference here: fastest and high accuracy.
+- `Q3_K_M` matches `Q4_0` on *valid-only* accuracy, but produces more invalid label strings under naive text parsing. If you need strict labels, prefer label-restricted scoring over free-text parsing.
+- `Q2_K` shows a clear collapse in both `valid_rate` and accuracy.
+
+![SNIPS: Accuracy vs Model Size](docs/images/snips_quality_vs_size.png)
+
+![SNIPS: CPU Performance & Cost Proxy](docs/images/snips_performance_cost_proxy.png)
+
+> Cost proxy: the second chart reports **CPU seconds per 1k inferences**. Multiply by your CPU hourly rate to estimate $/1k.
 
 ## ⚠️ Current Support
 Currently, compressGPT is optimized for **Classification Tasks** (e.g., Sentiment, Intent Detection, Spam Filtering). Support for Generation tasks (RAG, Chat) is coming soon.

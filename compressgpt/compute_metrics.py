@@ -1,29 +1,12 @@
-"""
-This module provides the ComputeMetrics class with label-restricted argmax
-for computing accuracy metrics on model predictions.
+"""ComputeMetrics implements label-restricted metrics for classification."""
 
-"""
-
-from typing import Optional, List, Dict
+from typing import List, Dict
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 import numpy as np
-import torch
 
 
 class ComputeMetrics:
-    """
-    Compute classification metrics with label-restricted argmax.
-    
-    Key feature: Restricts predictions to valid label token IDs only,
-    preventing vocabulary leakage and special token predictions.
-    
-    Attributes:
-        metadata: Dataset metadata from DatasetBuilder.get_metadata()
-        tokenizer: Tokenizer for decoding predictions (optional, for logging)
-        labels: List of label strings
-        label_token_ids: Dict mapping label string to token ID
-        id_to_label: Dict mapping token ID to label string
-    """
+    """Compute classification metrics with label-restricted argmax."""
     
     def __init__(
         self,
@@ -32,15 +15,7 @@ class ComputeMetrics:
         id_to_label: Dict[int, str],
         tokenizer=None
     ):
-        """
-        Initialize ComputeMetrics with label-restricted vocabulary.
-        
-        Args:
-            labels: List of label strings (e.g., ["yes", "no"])
-            valid_token_ids: List of valid label token IDs (e.g., [3763, 912])
-            id_to_label: Dict mapping token ID to label string
-            tokenizer: Optional tokenizer for logging
-        """
+        """Initialize ComputeMetrics."""
         self.labels = labels
         self.valid_token_ids = np.array(valid_token_ids)  # Convert to numpy for indexing
         self.id_to_label = id_to_label
@@ -77,25 +52,7 @@ class ComputeMetrics:
         gold_labels: list,
         log_samples: int = 0,
     ) -> dict:
-        """
-        Compute classification metrics.
-        
-        Accepts either token IDs or label strings for both predictions and gold_labels.
-        Automatically detects the input type and handles conversion.
-        
-        Args:
-            predictions: List of predicted token IDs OR label strings
-            gold_labels: List of gold token IDs OR label strings
-            log_samples: Number of sample predictions to print (0 = none)
-            
-        Returns:
-            Dictionary containing:
-                - accuracy: Overall accuracy
-                - f1_macro: Macro-averaged F1 score
-                - f1_{label}: Per-class F1 for each label
-                - precision_macro: Macro-averaged precision
-                - recall_macro: Macro-averaged recall
-        """
+        """Compute classification metrics for token IDs or label strings."""
         if len(predictions) != len(gold_labels):
             raise ValueError(
                 f"Length mismatch: {len(predictions)} predictions vs {len(gold_labels)} gold labels"
@@ -194,18 +151,7 @@ class ComputeMetrics:
         predictions: list,
         gold_labels: list,
     ) -> dict:
-        """
-        Get confusion matrix for the predictions.
-        
-        Args:
-            predictions: List of predicted token IDs OR label strings
-            gold_labels: List of gold token IDs OR label strings
-            
-        Returns:
-            Dictionary containing:
-                - matrix: 2D numpy array of the confusion matrix
-                - labels: List of label strings in matrix order
-        """
+        """Return a confusion matrix for predictions vs gold labels."""
         # Convert to token IDs if needed
         pred_type = self._detect_input_type(predictions)
         gold_type = self._detect_input_type(gold_labels)
@@ -223,13 +169,7 @@ class ComputeMetrics:
         }
     
     def print_report(self, predictions: list, gold_labels: list):
-        """
-        Print a formatted classification report.
-        
-        Args:
-            predictions: List of predicted token IDs OR label strings
-            gold_labels: List of gold token IDs OR label strings
-        """
+        """Print a formatted classification report."""
         results = self.compute(predictions, gold_labels)
         cm_data = self.get_confusion_matrix(predictions, gold_labels)
         
@@ -253,30 +193,7 @@ class ComputeMetrics:
         print("=" * 60 + "\n")
     
     def as_trainer_callback(self, log_first_n: int = 5):
-        """
-        Create a compute_metrics function for HuggingFace Trainer.
-        
-        This returns a closure compatible with Trainer's compute_metrics
-        parameter, handling the logits/labels format from eval_preds.
-        
-        CRITICAL: Uses label-restricted argmax (not full vocab) for classification.
-        Finds first non-masked position and extracts prediction at that position.
-        
-        Args:
-            log_first_n: Number of samples to log on first evaluation
-            
-        Returns:
-            A compute_metrics function for Trainer
-        
-        Example:
-            trainer = Trainer(
-                model=model,
-                args=training_args,
-                train_dataset=train_dataset,
-                eval_dataset=eval_dataset,
-                compute_metrics=metrics.as_trainer_callback(),
-            )
-        """
+        """Return a Trainer-compatible compute_metrics callback."""
         seen = False
         valid_token_ids = self.valid_token_ids  # Already numpy array
         labels_list = self.labels
@@ -306,17 +223,8 @@ class ComputeMetrics:
                     unknown_gold_count += 1
                     continue
                 
-                # CRITICAL FIX: In causal LM, logits[i] predicts token[i+1], NOT token[i]
-                # So to get the prediction for the token at position `pos`, we need logits[pos-1]
-                # This is because the model sees context[0:pos] and predicts what comes next.
-                #
-                # Example:
-                #   Position:  18    19    20      21
-                #   Token:    'Int' 'ent' ':' 'playlist' 
-                #   Labels:   -100  -100  -100   27889
-                #
-                # To predict token at position 20 ('playlist'), we look at logits[19].
-                # logits[19] = P(token | context[0:20]) = P(token | "...Intent:")
+                # In a causal LM, logits at position i predict token i+1.
+                # To score the label token at position `pos`, use logits at `pos-1`.
                 logit_pos = pos - 1
                 if logit_pos < 0:
                     # Edge case: label at position 0 (shouldn't happen with proper prompts)
@@ -327,21 +235,16 @@ class ComputeMetrics:
                 # Check if logits are already filtered (from preprocess_logits_for_metrics)
                 if step_logits.shape[0] == len(valid_token_ids):
                     # Already filtered to label tokens only by preprocess_logits_for_metrics
-                    # Shape is [num_labels], indices 0..num_labels-1 correspond to valid_token_ids
+                    # Shape: [num_labels], indices 0..num_labels-1 map to valid_token_ids
                     label_logits = step_logits
                 else:
-                    # Full vocabulary - need to filter
-                    # CRITICAL: Restrict to label tokens only (not full vocab)
-                    # This prevents the model from predicting arbitrary tokens like "the", "answer", etc.
-                    # and forces classification behavior over valid labels only.
+                    # Full vocabulary - filter to label tokens only.
                     label_logits = step_logits[valid_token_ids]  # [num_labels]
                 
                 # Argmax among label tokens: returns index 0..num_labels-1
                 best_label_idx = int(label_logits.argmax())
                 
-                # CRITICAL: Map index back to actual token ID
-                # After preprocessing, best_label_idx is in range [0, num_labels-1]
-                # We need to map it to the actual token ID using valid_token_ids
+                # Map index back to the actual token ID.
                 pred_id = int(valid_token_ids[best_label_idx])
                 
                 gold.append(gold_id)
@@ -386,26 +289,7 @@ class ComputeMetrics:
         return compute_metrics
 
     def get_preprocess_logits(self):
-        """
-        Create a preprocess_logits_for_metrics function for HuggingFace Trainer.
-        
-        CRITICAL FOR MEMORY: Filters logits to only label tokens BEFORE accumulation.
-        This reduces memory from ~128k vocab to ~2-10 label tokens (massive reduction!).
-        
-        Without this, eval uses: [batch_size, seq_len, 128k] * 4 bytes = huge memory
-        With this, eval uses: [batch_size, seq_len, num_labels] * 4 bytes = tiny memory
-        
-        Returns:
-            A preprocess function that filters logits to label tokens only
-            
-        Example:
-            trainer = SFTTrainer(
-                model=model,
-                args=training_args,
-                compute_metrics=metrics.as_trainer_callback(),
-                preprocess_logits_for_metrics=metrics.get_preprocess_logits(),  # ADD THIS
-            )
-        """
+        """Return a preprocess_logits_for_metrics callback."""
         valid_token_ids = self.valid_token_ids
         
         def preprocess_logits(logits, labels):

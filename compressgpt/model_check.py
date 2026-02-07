@@ -1,13 +1,4 @@
-"""
-Model compatibility checker for CompressGPT.
-
-This module provides utilities to check if a model can run on the current machine
-without actually loading the model weights. It estimates memory requirements and
-provides recommendations for training and inference.
-
-Usage:
-    python -m compressgpt.model_check meta-llama/Llama-3.2-1B-Instruct
-"""
+"""CLI utilities to estimate model memory and hardware compatibility."""
 
 import argparse
 import json

@@ -1,63 +1,12 @@
 """
 Utility functions for CompressGPT training and validation.
 
-This module provides helper functions for label validation, response template
-checking, data collator setup, and memory management.
+Helpers for response template checking, data collator setup, and memory management.
 """
 
 import gc
 import json
 import torch
-from typing import Dict, List, Optional
-
-
-def validate_label_tokens(tokenizer, labels: List[str]) -> Dict[str, int]:
-    """
-    Validate that each label maps to exactly one token ID.
-    
-    This is critical for first-token classification. Multi-token labels
-    would require different scoring logic.
-    
-    Args:
-        tokenizer: HuggingFace tokenizer
-        labels: List of label strings (e.g., ["yes", "no", "partial"])
-        
-    Returns:
-        Dict mapping label string to token ID
-        
-    Raises:
-        ValueError: If any label maps to multiple tokens
-        
-    Example:
-        >>> validate_label_tokens(tokenizer, ["yes", "no"])
-        {"yes": 3763, "no": 912}
-    """
-    label_token_ids = {}
-    errors = []
-    
-    for label in labels:
-        # Encode with leading space (common for classification tasks)
-        token_ids = tokenizer.encode(f" {label}", add_special_tokens=False)
-        
-        if len(token_ids) != 1:
-            errors.append(
-                f"Label '{label}' tokenizes to {len(token_ids)} tokens: {token_ids}. "
-                f"Decoded: {[tokenizer.decode([tid]) for tid in token_ids]}"
-            )
-        else:
-            label_token_ids[label] = token_ids[0]
-    
-    if errors:
-        error_msg = "❌ Label validation failed:\n" + "\n".join(f"  • {e}" for e in errors)
-        error_msg += (
-            "\n\n💡 Solutions:"
-            "\n  1. Use simpler labels that map to single tokens (e.g., 'yes'/'no' instead of 'affirmative')"
-            "\n  2. Adjust tokenizer vocabulary if possible"
-            "\n  3. Enable multi-token scoring (not yet implemented)"
-        )
-        raise ValueError(error_msg)
-    
-    return label_token_ids
 
 
 def validate_response_template(template: str, allow_special_tokens: bool = False) -> None:
@@ -106,10 +55,8 @@ def setup_data_collator(
     Create a completion-only collator that masks prompt tokens so loss is computed
     only on response tokens (classification label tokens in your case).
     
-    CRITICAL: For instruct models with chat templates, we use the assistant header
-    as the response template instead of the user-provided trigger. This is because
-    tokenization is context-sensitive: "Answer:" tokenizes differently when preceded
-    by a space vs. standalone. The assistant header is always tokenized consistently.
+    For instruct models, prefer the assistant header from the chat template.
+    This keeps masking aligned with the tokenizer's template behavior.
     
     Args:
         tokenizer: The tokenizer
@@ -124,8 +71,7 @@ def setup_data_collator(
         from trl import DataCollatorForCompletionOnlyLM
         
         if model_mode == "instruct":
-            # For instruct models, use the assistant header as response template
-            # This is more reliable than user triggers due to context-sensitive tokenization
+            # For instruct models, use the assistant header as the response template.
             #
             # Common assistant headers:
             # - Llama 3: <|start_header_id|>assistant<|end_header_id|>\n\n
@@ -145,13 +91,13 @@ def setup_data_collator(
                     assistant_header = "[/INST]"
             
             if assistant_header:
-                # Use assistant header for reliable masking
+                # Use assistant header for consistent masking
                 return DataCollatorForCompletionOnlyLM(
                     tokenizer=tokenizer,
                     response_template=assistant_header,
                 )
             else:
-                # Fallback: try stripped response_template
+                # Fallback: use a stripped response template
                 import warnings
                 warnings.warn(
                     f"Could not detect assistant header for instruct model. "

@@ -1,19 +1,4 @@
-"""
-GGUF Converter - Convert HuggingFace models to GGUF format.
-
-This module provides a clean Python API for converting HuggingFace models
-to GGUF format with optional quantization. It wraps the vendored
-convert_hf_to_gguf.py script from llama.cpp.
-
-Usage:
-    from compressgpt.gguf_converter import convert_to_gguf
-    
-    output_path = convert_to_gguf(
-        model_path="/path/to/hf/model",
-        output_path="/path/to/output.gguf",
-        quantization="q8_0"
-    )
-"""
+"""GGUF conversion utilities using the bundled llama.cpp converter."""
 
 import logging
 import os
@@ -37,32 +22,7 @@ def convert_to_gguf(
     use_temp_file: bool = False,
     verbose: bool = False,
 ) -> Path:
-    """
-    Convert a HuggingFace model to GGUF format.
-    
-    Args:
-        model_path: Path to the HuggingFace model directory (must contain config.json)
-        output_path: Path for the output GGUF file. If None, creates in model_path directory.
-        quantization: Quantization type. Options:
-            - "f32": Full 32-bit float (largest, most accurate)
-            - "f16": 16-bit float 
-            - "bf16": Brain float 16
-            - "q8_0": 8-bit quantization (recommended for most uses)
-            - "tq1_0": Ternary quantization (smallest)
-            - "tq2_0": Ternary quantization variant
-            - "auto": Automatically choose best 16-bit format
-        model_name: Optional name for the model in GGUF metadata
-        use_temp_file: Use temp file during processing (helps with memory)
-        verbose: Enable verbose logging
-        
-    Returns:
-        Path to the created GGUF file
-        
-    Raises:
-        FileNotFoundError: If model_path doesn't exist or isn't a valid model directory
-        ValueError: If quantization type is not supported
-        RuntimeError: If conversion fails
-    """
+    """Convert a HuggingFace model directory to GGUF."""
     model_path = Path(model_path)
     
     # Validate model path
@@ -165,12 +125,7 @@ def convert_to_gguf(
 
 
 def get_supported_architectures() -> list[str]:
-    """
-    Get list of model architectures supported for GGUF conversion.
-    
-    Returns:
-        List of supported architecture names
-    """
+    """Return supported model architectures for GGUF conversion."""
     vendor_dir = Path(__file__).parent / "gguf_vendor"
     if str(vendor_dir) not in sys.path:
         sys.path.insert(0, str(vendor_dir))
@@ -184,15 +139,7 @@ def get_supported_architectures() -> list[str]:
 
 
 def check_model_supported(model_path: str | Path) -> tuple[bool, str]:
-    """
-    Check if a model is supported for GGUF conversion.
-    
-    Args:
-        model_path: Path to the HuggingFace model directory
-        
-    Returns:
-        Tuple of (is_supported, architecture_name or error_message)
-    """
+    """Check if a model directory is supported for GGUF conversion."""
     model_path = Path(model_path)
     
     if not (model_path / "config.json").exists():
