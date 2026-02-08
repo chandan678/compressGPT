@@ -114,7 +114,7 @@ The following results show the size/quality/performance trade-offs of advanced G
 - Quantizations: `Q8_0` produced by compressGPT's bundled GGUF converter; `Q4_0`, `Q3_K_M`, and `Q2_K` produced using the external `llama-quantize` tool (see note in Deployment section).
 - Metrics:
   - `valid_rate`: fraction of samples where the model produced one of the allowed label words.
-  - `valid_only_accuracy`: accuracy after filtering `INVALID_OUTPUT` samples (useful to isolate decision quality from output-formatting failures).
+  - `valid_only_accuracy`: accuracy after filtering `INVALID_OUTPUT` samples (useful to isolate decision quality from output-formatting failures which can be resolved with retry).
 
 | GGUF | Size (MB) | valid_rate | valid_only_accuracy | Samples/sec | P95 latency (ms) |
 |---|---:|---:|---:|---:|---:|
