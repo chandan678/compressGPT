@@ -1,4 +1,5 @@
 # compressGPT
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/compressgpt-core?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/compressgpt-core)
 
 **compressGPT** is a flexible, modular training pipeline designed to bridge the gap between large foundation models and efficient edge-ready deployment.
 
